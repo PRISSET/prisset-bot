@@ -384,7 +384,11 @@ function handleCommand(line) {
       break;
 
     default:
-      if (cmd) log(`Unknown command: ${cmd}. Type /help`);
+      if (line.trim() && bot) {
+        bot.chat(line.trim());
+      } else if (line.trim()) {
+        log('Not connected. Type /start');
+      }
       break;
   }
 }
