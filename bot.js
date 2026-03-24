@@ -7,6 +7,7 @@ const cfg = settings.load();
 let bot = null;
 let guardActive = false;
 let antiAfkTimer = null;
+let guardScanTimer = null;
 let navigationDone = false;
 let spawnHandled = false;
 
@@ -67,21 +68,9 @@ function startBot() {
   });
 
   bot.on('entitySpawned', (entity) => {
-    if (entity.type === 'player' || entity.type === 'other') {
-      log(`[ENTITY] spawned: type=${entity.type} username=${entity.username || 'null'} name=${entity.name || 'null'} id=${entity.id} pos=${entity.position ? Math.floor(entity.position.x)+','+Math.floor(entity.position.z) : 'null'}`);
+    if (entity.type === 'player') {
+      log(`[ENTITY] spawned: ${entity.username || 'null'} id=${entity.id}`);
     }
-    if (!guardActive) return;
-    if (entity.type !== 'player') return;
-    if (!entity.username) return;
-    if (entity.username === cfg.botNick) return;
-    if (settings.shouldIgnore(entity.username)) return;
-    if (!bot.entity) return;
-
-    const dist = bot.entity.position.distanceTo(entity.position);
-    log(`[GUARD] Player ${entity.username} at distance ${Math.floor(dist)}`);
-    if (dist > 200) return;
-
-    checkPlayer(entity.username, entity.position);
   });
 
   bot.on('playerJoined', (player) => {
@@ -95,6 +84,7 @@ function startBot() {
   bot.on('end', (reason) => {
     log(`Disconnected: ${reason}`);
     stopAntiAfk();
+    stopGuardScan();
     guardActive = false;
     bot = null;
   });
@@ -102,6 +92,7 @@ function startBot() {
   bot.on('kicked', (reason) => {
     log(`Kicked: ${reason}`);
     stopAntiAfk();
+    stopGuardScan();
     guardActive = false;
   });
 
@@ -190,6 +181,42 @@ function onNavigationDone() {
   guardActive = true;
   log('Guard mode ACTIVE. Monitoring for enemies...');
   startAntiAfk();
+  startGuardScan();
+}
+
+function startGuardScan() {
+  stopGuardScan();
+  guardScanTimer = setInterval(() => {
+    if (!bot || !guardActive) return;
+    scanNearbyPlayers();
+  }, 2000);
+  log('Guard scan: checking nearby players every 2s');
+}
+
+function stopGuardScan() {
+  if (guardScanTimer) {
+    clearInterval(guardScanTimer);
+    guardScanTimer = null;
+  }
+}
+
+function scanNearbyPlayers() {
+  if (!bot || !bot.entity) return;
+
+  for (const name of Object.keys(bot.players)) {
+    if (name === cfg.botNick) continue;
+    if (settings.shouldIgnore(name)) continue;
+
+    const playerData = bot.players[name];
+    if (!playerData || !playerData.entity) continue;
+
+    const dist = bot.entity.position.distanceTo(playerData.entity.position);
+    if (dist > 200) continue;
+
+    log(`[SCAN] Enemy "${name}" at distance ${Math.floor(dist)}!`);
+    checkPlayer(name, playerData.entity.position);
+    return;
+  }
 }
 
 function startAntiAfk() {
