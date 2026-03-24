@@ -8,6 +8,7 @@ let bot = null;
 let guardActive = false;
 let antiAfkTimer = null;
 let navigationDone = false;
+let spawnHandled = false;
 
 const log = (msg) => console.log(`[${new Date().toLocaleTimeString()}] ${msg}`);
 
@@ -31,6 +32,7 @@ function sendTelegram(text) {
 function startBot() {
   navigationDone = false;
   guardActive = false;
+  spawnHandled = false;
 
   log(`Connecting as "${cfg.botNick}" to ${cfg.serverHost}:${cfg.serverPort}...`);
 
@@ -44,12 +46,15 @@ function startBot() {
   });
 
   bot.on('login', () => {
-    log('Connected to server!');
+    log('Logged in to server!');
   });
 
   bot.on('spawn', () => {
-    log('Spawned! Starting navigation in 3s...');
-    setTimeout(() => navigateToAnarchy(), 3000);
+    log('Spawned on server!');
+    if (spawnHandled) return;
+    spawnHandled = true;
+    log('Waiting 5s before sending /anarchy...');
+    setTimeout(() => navigateToAnarchy(), 5000);
   });
 
   bot.on('windowOpen', (window) => {
