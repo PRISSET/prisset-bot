@@ -94,17 +94,13 @@ async function navigateToAnarchy() {
   if (navigationDone) return;
 
   try {
-    log('Step 1: Using compass (slot 0)...');
-    bot.setQuickBarSlot(0);
-    await sleep(500);
-    bot.activateItem();
-    log('Compass activated, waiting for menu...');
+    log('Sending /anarchy command...');
+    bot.chat('/anarchy');
+    log('Waiting for server selection GUI...');
   } catch (e) {
     log(`Navigation error: ${e.message}`);
   }
 }
-
-let navStep = 0;
 
 function handleWindow(window) {
   const title = window.title ? JSON.stringify(window.title) : '';
@@ -112,41 +108,33 @@ function handleWindow(window) {
 
   logWindowSlots(window);
 
-  if (navStep === 0) {
-    log('Step 2: Looking for "Classic Anarchy 1.16" slot...');
-    const slot = findSlotByName(window, ['\u043a\u043b\u0430\u0441\u0441\u0438\u0447\u0435\u0441\u043a', 'classic', '\u0430\u043d\u0430\u0440\u0445\u0438', 'anarchy', '1.16']);
-    if (slot !== null) {
-      log(`Found at slot ${slot}, clicking...`);
-      navStep = 1;
-      bot.clickWindow(slot, 0, 0);
-    } else {
-      log('Could not find anarchy slot, trying slot 11 (common position)...');
-      navStep = 1;
-      bot.clickWindow(11, 0, 0);
-    }
-    return;
-  }
+  let slot = findSlotWithCount(window, 2);
+  if (slot === null) slot = findSlotByName(window, ['2']);
 
-  if (navStep === 1) {
-    log('Step 3: Looking for "Classic 2" slot...');
-    const slot = findSlotByName(window, ['\u043a\u043b\u0430\u0441\u0441\u0438\u043a 2', 'classic 2', '\u043a\u043b\u0430\u0441\u0441\u0438\u043a\u0430 2']);
-    if (slot !== null) {
-      log(`Found at slot ${slot}, clicking...`);
-      navStep = 2;
+  if (slot !== null) {
+    log(`Found server "2" at slot ${slot}, clicking...`);
+    setTimeout(() => {
       bot.clickWindow(slot, 0, 0);
-    } else {
-      log('Could not find classic 2 slot, trying slot 12...');
-      navStep = 2;
+      log('Clicked! Waiting for teleport...');
+      setTimeout(() => onNavigationDone(), 3000);
+    }, 500);
+  } else {
+    log('Could not find slot automatically, trying slot 12...');
+    setTimeout(() => {
       bot.clickWindow(12, 0, 0);
-    }
-    return;
+      log('Clicked slot 12! Waiting for teleport...');
+      setTimeout(() => onNavigationDone(), 3000);
+    }, 500);
   }
+}
 
-  if (navStep === 2) {
-    log('Navigation complete! Closing window...');
-    bot.closeWindow(window);
-    onNavigationDone();
+function findSlotWithCount(window, count) {
+  for (let i = 0; i < window.slots.length; i++) {
+    const item = window.slots[i];
+    if (!item) continue;
+    if (item.count === count) return i;
   }
+  return null;
 }
 
 function findSlotByName(window, keywords) {
