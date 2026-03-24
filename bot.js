@@ -67,6 +67,9 @@ function startBot() {
   });
 
   bot.on('entitySpawned', (entity) => {
+    if (entity.type === 'player' || entity.type === 'other') {
+      log(`[ENTITY] spawned: type=${entity.type} username=${entity.username || 'null'} name=${entity.name || 'null'} id=${entity.id} pos=${entity.position ? Math.floor(entity.position.x)+','+Math.floor(entity.position.z) : 'null'}`);
+    }
     if (!guardActive) return;
     if (entity.type !== 'player') return;
     if (!entity.username) return;
@@ -75,9 +78,18 @@ function startBot() {
     if (!bot.entity) return;
 
     const dist = bot.entity.position.distanceTo(entity.position);
+    log(`[GUARD] Player ${entity.username} at distance ${Math.floor(dist)}`);
     if (dist > 200) return;
 
     checkPlayer(entity.username, entity.position);
+  });
+
+  bot.on('playerJoined', (player) => {
+    log(`[TAB] Player joined: ${player.username}`);
+  });
+
+  bot.on('playerLeft', (player) => {
+    log(`[TAB] Player left: ${player.username}`);
   });
 
   bot.on('end', (reason) => {
