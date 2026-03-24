@@ -47,8 +47,11 @@ function startBot() {
 
   bot.on('login', () => {
     log('Logged in to server!');
-    log('Waiting 8s for server to load, then sending /anarchy...');
-    setTimeout(() => navigateToAnarchy(), 8000);
+    if (!navigationDone && !spawnHandled) {
+      log('Waiting 8s for server to load, then sending /anarchy...');
+      spawnHandled = true;
+      setTimeout(() => navigateToAnarchy(), 8000);
+    }
   });
 
   bot.on('spawn', () => {
@@ -170,7 +173,6 @@ function logWindowSlots(window) {
 function onNavigationDone() {
   navigationDone = true;
   guardActive = true;
-  navStep = 0;
   log('Guard mode ACTIVE. Monitoring for enemies...');
   startAntiAfk();
 }
