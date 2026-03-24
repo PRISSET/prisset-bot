@@ -47,18 +47,20 @@ function startBot() {
 
   bot.on('login', () => {
     log('Logged in to server!');
+    log('Waiting 8s for server to load, then sending /anarchy...');
+    setTimeout(() => navigateToAnarchy(), 8000);
   });
 
   bot.on('spawn', () => {
-    log('Spawned on server!');
-    if (spawnHandled) return;
-    spawnHandled = true;
-    log('Waiting 5s before sending /anarchy...');
-    setTimeout(() => navigateToAnarchy(), 5000);
+    log('Spawn event received');
   });
 
   bot.on('windowOpen', (window) => {
     handleWindow(window);
+  });
+
+  bot._client.on('open_window', (packet) => {
+    log(`[RAW] open_window packet: windowId=${packet.windowId} type=${packet.inventoryType} title=${JSON.stringify(packet.windowTitle)}`);
   });
 
   bot.on('playerJoined', (player) => {
