@@ -204,25 +204,36 @@ function checkPlayer(username) {
   if (username === cfg.botNick) return;
   if (settings.shouldIgnore(username)) return;
 
-  log(`ENEMY DETECTED: ${username}! Disconnecting...`);
+  log(`ENEMY DETECTED: ${username}! Waiting 2s for coordinates...`);
 
-  const selfName = cfg.botNick;
-  let enemyPos = 'unknown';
+  setTimeout(() => {
+    if (!bot) return;
 
-  if (bot) {
+    const selfName = cfg.botNick;
+    let enemyPos = 'unknown';
+    let botPos = 'unknown';
+
     const player = bot.players[username];
     if (player && player.entity) {
       const pos = player.entity.position;
       enemyPos = `X: ${Math.floor(pos.x)}, Y: ${Math.floor(pos.y)}, Z: ${Math.floor(pos.z)}`;
     }
-  }
 
-  const tgText = `[PRISSET BOT] \u0412\u0430\u0441 \u0440\u0435\u0439\u0434\u044f\u0442!\n\u0420\u0435\u0439\u0434\u0435\u0440: ${username}\n\u041a\u043e\u043e\u0440\u0434\u0438\u043d\u0430\u0442\u044b: ${enemyPos}\n\u0411\u043e\u0442: ${selfName}`;
-  sendTelegram(tgText);
+    if (bot.entity) {
+      const pos = bot.entity.position;
+      botPos = `X: ${Math.floor(pos.x)}, Y: ${Math.floor(pos.y)}, Z: ${Math.floor(pos.z)}`;
+    }
 
-  if (bot) {
+    if (enemyPos === 'unknown' && botPos !== 'unknown') {
+      enemyPos = `\u043e\u043a\u043e\u043b\u043e ${botPos}`;
+    }
+
+    const tgText = `[PRISSET BOT] \u0412\u0430\u0441 \u0440\u0435\u0439\u0434\u044f\u0442!\n\u0420\u0435\u0439\u0434\u0435\u0440: ${username}\n\u041a\u043e\u043e\u0440\u0434\u0438\u043d\u0430\u0442\u044b \u0440\u0435\u0439\u0434\u0435\u0440\u0430: ${enemyPos}\n\u041a\u043e\u043e\u0440\u0434\u0438\u043d\u0430\u0442\u044b \u0431\u043e\u0442\u0430: ${botPos}\n\u0411\u043e\u0442: ${selfName}`;
+    sendTelegram(tgText);
+
+    log(`Disconnecting! Raider: ${username} at ${enemyPos}`);
     bot.quit('Raid detected');
-  }
+  }, 2000);
 }
 
 function sleep(ms) {
