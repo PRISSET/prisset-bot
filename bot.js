@@ -13,7 +13,6 @@ const cfg = settings.load();
 let bot = null;
 let guardActive = false;
 let farmActive = false;
-let antiAfkTimer = null;
 let guardScanTimer = null;
 let farmLoopTimer = null;
 let autoEatTimer = null;
@@ -31,6 +30,45 @@ const HOSTILE_MOBS = new Set([
 ]);
 
 const SWORD_TIERS = ['netherite_sword', 'diamond_sword', 'iron_sword', 'stone_sword', 'golden_sword', 'wooden_sword'];
+
+const MOB_NAMES_RU = {
+  'zombie': '\u0437\u043e\u043c\u0431\u0438', 'skeleton': '\u0441\u043a\u0435\u043b\u0435\u0442',
+  'spider': '\u043f\u0430\u0443\u043a', 'cave_spider': '\u043f\u0435\u0449\u0435\u0440\u043d\u044b\u0439 \u043f\u0430\u0443\u043a',
+  'creeper': '\u043a\u0440\u0438\u043f\u0435\u0440', 'enderman': '\u044d\u043d\u0434\u0435\u0440\u043c\u0435\u043d',
+  'witch': '\u0432\u0435\u0434\u044c\u043c\u0430', 'slime': '\u0441\u043b\u0430\u0439\u043c',
+  'magma_cube': '\u043c\u0430\u0433\u043c\u0430-\u043a\u0443\u0431', 'phantom': '\u0444\u0430\u043d\u0442\u043e\u043c',
+  'drowned': '\u0443\u0442\u043e\u043f\u043b\u0435\u043d\u043d\u0438\u043a', 'husk': '\u043a\u0430\u0434\u0430\u0432\u0440',
+  'stray': '\u0441\u0442\u0440\u0435\u0439', 'zombie_villager': '\u0437\u043e\u043c\u0431\u0438-\u0436\u0438\u0442\u0435\u043b\u044c',
+  'pillager': '\u0440\u0430\u0437\u0431\u043e\u0439\u043d\u0438\u043a', 'vindicator': '\u043f\u043e\u0431\u043e\u0440\u043d\u0438\u043a',
+  'evoker': '\u0432\u044b\u0437\u044b\u0432\u0430\u0442\u0435\u043b\u044c', 'ravager': '\u0440\u0430\u0437\u043e\u0440\u0438\u0442\u0435\u043b\u044c',
+  'hoglin': '\u0445\u043e\u0433\u043b\u0438\u043d', 'piglin_brute': '\u043f\u0438\u0433\u043b\u0438\u043d-\u0433\u0440\u0443\u0431\u0438\u044f\u043d',
+  'warden': '\u0441\u0442\u0440\u0430\u0436', 'blaze': '\u0431\u043b\u0435\u0439\u0437',
+  'ghast': '\u0433\u0430\u0441\u0442', 'wither_skeleton': '\u0441\u043a\u0435\u043b\u0435\u0442-\u0438\u0441\u0441\u0443\u0448\u0438\u0442\u0435\u043b\u044c'
+};
+
+const ITEM_NAMES_RU = {
+  'netherite_sword': '\u043d\u0435\u0437\u0435\u0440\u0438\u0442\u043e\u0432\u044b\u0439 \u043c\u0435\u0447',
+  'diamond_sword': '\u0430\u043b\u043c\u0430\u0437\u043d\u044b\u0439 \u043c\u0435\u0447',
+  'iron_sword': '\u0436\u0435\u043b\u0435\u0437\u043d\u044b\u0439 \u043c\u0435\u0447',
+  'stone_sword': '\u043a\u0430\u043c\u0435\u043d\u043d\u044b\u0439 \u043c\u0435\u0447',
+  'golden_sword': '\u0437\u043e\u043b\u043e\u0442\u043e\u0439 \u043c\u0435\u0447',
+  'wooden_sword': '\u0434\u0435\u0440\u0435\u0432\u044f\u043d\u043d\u044b\u0439 \u043c\u0435\u0447',
+  'golden_carrot': '\u0437\u043e\u043b\u043e\u0442\u0430\u044f \u043c\u043e\u0440\u043a\u043e\u0432\u043a\u0430',
+  'cooked_beef': '\u0441\u0442\u0435\u0439\u043a', 'cooked_porkchop': '\u0436\u0430\u0440\u0435\u043d\u0430\u044f \u0441\u0432\u0438\u043d\u0438\u043d\u0430',
+  'cooked_mutton': '\u0436\u0430\u0440\u0435\u043d\u0430\u044f \u0431\u0430\u0440\u0430\u043d\u0438\u043d\u0430',
+  'cooked_salmon': '\u0436\u0430\u0440\u0435\u043d\u044b\u0439 \u043b\u043e\u0441\u043e\u0441\u044c',
+  'cooked_chicken': '\u0436\u0430\u0440\u0435\u043d\u0430\u044f \u043a\u0443\u0440\u0438\u0446\u0430',
+  'cooked_rabbit': '\u0436\u0430\u0440\u0435\u043d\u044b\u0439 \u043a\u0440\u043e\u043b\u0438\u043a',
+  'cooked_cod': '\u0436\u0430\u0440\u0435\u043d\u0430\u044f \u0442\u0440\u0435\u0441\u043a\u0430',
+  'bread': '\u0445\u043b\u0435\u0431', 'baked_potato': '\u043f\u0435\u0447\u0451\u043d\u044b\u0439 \u043a\u0430\u0440\u0442\u043e\u0444\u0435\u043b\u044c',
+  'apple': '\u044f\u0431\u043b\u043e\u043a\u043e', 'melon_slice': '\u0434\u043e\u043b\u044c\u043a\u0430 \u0430\u0440\u0431\u0443\u0437\u0430',
+  'sweet_berries': '\u0441\u043b\u0430\u0434\u043a\u0438\u0435 \u044f\u0433\u043e\u0434\u044b',
+  'dried_kelp': '\u0441\u0443\u0448\u0451\u043d\u0430\u044f \u043c\u043e\u0440\u0441\u043a\u0430\u044f \u043a\u0430\u043f\u0443\u0441\u0442\u0430',
+  'carrot': '\u043c\u043e\u0440\u043a\u043e\u0432\u043a\u0430', 'potato': '\u043a\u0430\u0440\u0442\u043e\u0444\u0435\u043b\u044c'
+};
+
+function ru(name) { return ITEM_NAMES_RU[name] || MOB_NAMES_RU[name] || name; }
+
 const FOOD_VALUES = {
   'golden_carrot': 6, 'cooked_beef': 8, 'cooked_porkchop': 8,
   'cooked_mutton': 6, 'cooked_salmon': 6, 'cooked_chicken': 6,
@@ -74,7 +112,7 @@ function startBot() {
   spawnHandled = false;
   reconnecting = false;
 
-  log(`Connecting as "${cfg.botNick}" to ${cfg.serverHost}:${cfg.serverPort}...`);
+  log(`\u041f\u043e\u0434\u043a\u043b\u044e\u0447\u0435\u043d\u0438\u0435 \u043a\u0430\u043a "${cfg.botNick}" \u043a ${cfg.serverHost}:${cfg.serverPort}...`);
 
   bot = mineflayer.createBot({
     host: cfg.serverHost,
@@ -89,16 +127,16 @@ function startBot() {
   bot.loadPlugin(pvpPlugin);
 
   bot.on('login', () => {
-    log('Logged in to server!');
+    log('\u0412\u043e\u0448\u043b\u0438 \u043d\u0430 \u0441\u0435\u0440\u0432\u0435\u0440!');
     if (!navigationDone && !spawnHandled) {
-      log('Waiting 8s for server to load, then sending /anarchy...');
+      log('\u0416\u0434\u0451\u043c 8 \u0441\u0435\u043a \u0437\u0430\u0433\u0440\u0443\u0437\u043a\u0443, \u043f\u043e\u0442\u043e\u043c /anarchy...');
       spawnHandled = true;
       setTimeout(() => navigateToAnarchy(), 8000);
     }
   });
 
   bot.on('spawn', () => {
-    log('Spawn event received');
+    log('\u0421\u043f\u0430\u0432\u043d');
   });
 
   bot.on('windowOpen', (window) => {
@@ -110,18 +148,18 @@ function startBot() {
   });
 
   bot.on('end', (reason) => {
-    log(`Disconnected: ${reason}`);
+    log(`\u041e\u0442\u043a\u043b\u044e\u0447\u0435\u043d\u043e: ${reason}`);
     cleanup();
     bot = null;
   });
 
   bot.on('kicked', (reason) => {
-    log(`Kicked: ${reason}`);
+    log(`\u041a\u0438\u043a\u043d\u0443\u0442: ${reason}`);
     cleanup();
   });
 
   bot.on('error', (err) => {
-    log(`Error: ${err.message}`);
+    log(`\u041e\u0448\u0438\u0431\u043a\u0430: ${err.message}`);
   });
 
   bot.on('message', (msg) => {
@@ -131,7 +169,6 @@ function startBot() {
 }
 
 function cleanup() {
-  stopAntiAfk();
   stopGuardScan();
   stopFarmLoop();
   stopAutoEat();
@@ -146,34 +183,34 @@ function cleanup() {
 async function navigateToAnarchy() {
   if (navigationDone) return;
   try {
-    log('Sending /anarchy command...');
+    log('\u041e\u0442\u043f\u0440\u0430\u0432\u043b\u044f\u0435\u043c /anarchy...');
     bot.chat('/anarchy');
-    log('Waiting for server selection GUI...');
+    log('\u0416\u0434\u0451\u043c GUI \u0432\u044b\u0431\u043e\u0440\u0430 \u0441\u0435\u0440\u0432\u0435\u0440\u0430...');
   } catch (e) {
-    log(`Navigation error: ${e.message}`);
+    log(`\u041e\u0448\u0438\u0431\u043a\u0430 \u043d\u0430\u0432\u0438\u0433\u0430\u0446\u0438\u0438: ${e.message}`);
   }
 }
 
 function handleWindow(window) {
   const title = window.title ? JSON.stringify(window.title) : '';
-  log(`Window opened: ${title} (${window.slots.length} slots)`);
+  log(`\u041e\u043a\u043d\u043e: ${title} (${window.slots.length} \u0441\u043b\u043e\u0442\u043e\u0432)`);
   logWindowSlots(window);
 
   let slot = findSlotWithCount(window, 2);
   if (slot === null) slot = findSlotByName(window, ['2']);
 
   if (slot !== null) {
-    log(`Found server "2" at slot ${slot}, clicking...`);
+    log(`\u0421\u0435\u0440\u0432\u0435\u0440 "2" \u0432 \u0441\u043b\u043e\u0442\u0435 ${slot}, \u043a\u043b\u0438\u043a\u0430\u0435\u043c...`);
     setTimeout(() => {
       bot.clickWindow(slot, 0, 0);
-      log('Clicked! Waiting for teleport...');
+      log('\u041a\u043b\u0438\u043a\u043d\u0443\u043b\u0438! \u0416\u0434\u0451\u043c \u0442\u0435\u043b\u0435\u043f\u043e\u0440\u0442...');
       setTimeout(() => onNavigationDone(), 3000);
     }, 500);
   } else {
-    log('Could not find slot automatically, trying slot 12...');
+    log('\u041d\u0435 \u043d\u0430\u0448\u043b\u0438 \u0441\u043b\u043e\u0442, \u043f\u0440\u043e\u0431\u0443\u0435\u043c \u0441\u043b\u043e\u0442 12...');
     setTimeout(() => {
       bot.clickWindow(12, 0, 0);
-      log('Clicked slot 12! Waiting for teleport...');
+      log('\u041a\u043b\u0438\u043a\u043d\u0443\u043b\u0438 \u0441\u043b\u043e\u0442 12! \u0416\u0434\u0451\u043c \u0442\u0435\u043b\u0435\u043f\u043e\u0440\u0442...');
       setTimeout(() => onNavigationDone(), 3000);
     }, 500);
   }
@@ -215,7 +252,7 @@ function onNavigationDone() {
   navigationDone = true;
   guardActive = true;
   farmActive = true;
-  log('Farm mode ACTIVE. Hunting mobs + guarding...');
+  log('\u0424\u0410\u0420\u041c \u0410\u041a\u0422\u0418\u0412\u0415\u041d. \u041e\u0445\u043e\u0442\u0430 \u043d\u0430 \u043c\u043e\u0431\u043e\u0432 + \u043e\u0445\u0440\u0430\u043d\u0430...');
 
   const mcData = mcDataLoader(bot.version);
   const defaultMove = new Movements(bot, mcData);
@@ -223,7 +260,6 @@ function onNavigationDone() {
   defaultMove.allow1by1towers = false;
   bot.pathfinder.setMovements(defaultMove);
 
-  startAntiAfk();
   startGuardScan();
   startFarmLoop();
   startAutoEat();
@@ -241,7 +277,7 @@ function startGuardScan() {
     if (!bot || !guardActive) return;
     scanNearbyPlayers();
   }, 2000);
-  log('Guard scan: checking nearby players every 2s');
+  log('\u041e\u0445\u0440\u0430\u043d\u0430: \u043f\u0440\u043e\u0432\u0435\u0440\u043a\u0430 \u0438\u0433\u0440\u043e\u043a\u043e\u0432 \u043a\u0430\u0436\u0434\u044b\u0435 2\u0441');
 }
 
 function stopGuardScan() {
@@ -251,8 +287,15 @@ function stopGuardScan() {
   }
 }
 
+function isAtSpawn() {
+  if (!bot || !bot.entity) return true;
+  const pos = bot.entity.position;
+  return Math.abs(pos.x) < 100 && Math.abs(pos.z) < 100;
+}
+
 function scanNearbyPlayers() {
   if (!bot || !bot.entity) return;
+  if (isAtSpawn()) return;
 
   for (const name of Object.keys(bot.players)) {
     if (name === cfg.botNick) continue;
@@ -264,7 +307,7 @@ function scanNearbyPlayers() {
     const dist = bot.entity.position.distanceTo(playerData.entity.position);
     if (dist > 200) continue;
 
-    log(`[GUARD] Enemy "${name}" at distance ${Math.floor(dist)}!`);
+    log(`[\u041e\u0425\u0420\u0410\u041d\u0410] \u0412\u0440\u0430\u0433 "${name}" \u043d\u0430 \u0440\u0430\u0441\u0441\u0442\u043e\u044f\u043d\u0438\u0438 ${Math.floor(dist)} \u0431\u043b\u043e\u043a\u043e\u0432!`);
     handleEnemyDetected(name, playerData.entity.position);
     return;
   }
@@ -286,7 +329,7 @@ async function handleEnemyDetected(username, entityPos) {
   const tgText = `[PRISSET BOT] \u0412\u0430\u0441 \u0440\u0435\u0439\u0434\u044f\u0442!\n\u0420\u0435\u0439\u0434\u0435\u0440: ${username}\n\u041a\u043e\u043e\u0440\u0434\u0438\u043d\u0430\u0442\u044b \u0440\u0435\u0439\u0434\u0435\u0440\u0430: ${enemyPos}\n\u041a\u043e\u043e\u0440\u0434\u0438\u043d\u0430\u0442\u044b \u0431\u043e\u0442\u0430: ${botPos}\n\u0411\u043e\u0442: ${selfName}`;
   sendTelegram(tgText);
 
-  log(`ENEMY: ${username} at ${enemyPos}. Disconnecting...`);
+  log(`\u0412\u0420\u0410\u0413: ${username} \u043d\u0430 ${enemyPos}. \u041e\u0442\u043a\u043b\u044e\u0447\u0430\u0435\u043c\u0441\u044f...`);
   lastEnemyName = username;
 
   if (bot) {
@@ -294,13 +337,13 @@ async function handleEnemyDetected(username, entityPos) {
     bot.quit('Raid detected');
   }
 
-  log('Waiting 2 minutes before reconnect attempt...');
+  log('\u0416\u0434\u0451\u043c 2 \u043c\u0438\u043d\u0443\u0442\u044b \u043f\u0435\u0440\u0435\u0434 \u0440\u0435\u043a\u043e\u043d\u043d\u0435\u043a\u0442\u043e\u043c...');
   reconnecting = true;
   await sleep(120000);
 
   if (!reconnecting) return;
 
-  log('Reconnecting to check if enemy left...');
+  log('\u0420\u0435\u043a\u043e\u043d\u043d\u0435\u043a\u0442 \u0434\u043b\u044f \u043f\u0440\u043e\u0432\u0435\u0440\u043a\u0438...');
   startReconnectCheck();
 }
 
@@ -320,7 +363,7 @@ function startReconnectCheck() {
   let checkDone = false;
 
   bot.on('login', () => {
-    log('[RECHECK] Logged in, sending /anarchy...');
+    log('[\u041f\u0420\u041e\u0412\u0415\u0420\u041a\u0410] \u0412\u043e\u0448\u043b\u0438, \u043e\u0442\u043f\u0440\u0430\u0432\u043b\u044f\u0435\u043c /anarchy...');
     setTimeout(() => {
       if (bot) bot.chat('/anarchy');
     }, 8000);
@@ -339,14 +382,14 @@ function startReconnectCheck() {
 
   bot.on('end', () => {
     if (!checkDone) {
-      log('[RECHECK] Disconnected unexpectedly');
+      log('[\u041f\u0420\u041e\u0412\u0415\u0420\u041a\u0410] \u041d\u0435\u043e\u0436\u0438\u0434\u0430\u043d\u043d\u043e\u0435 \u043e\u0442\u043a\u043b\u044e\u0447\u0435\u043d\u0438\u0435');
       bot = null;
       reconnecting = false;
     }
   });
 
   bot.on('error', (err) => {
-    log(`[RECHECK] Error: ${err.message}`);
+    log(`[\u041f\u0420\u041e\u0412\u0415\u0420\u041a\u0410] \u041e\u0448\u0438\u0431\u043a\u0430: ${err.message}`);
   });
 
   function recheckEnemies() {
@@ -362,20 +405,20 @@ function startReconnectCheck() {
       const dist = bot.entity ? bot.entity.position.distanceTo(pd.entity.position) : 999;
       if (dist <= 200) {
         enemyStillHere = true;
-        log(`[RECHECK] Enemy "${name}" still here at distance ${Math.floor(dist)}`);
+        log(`[\u041f\u0420\u041e\u0412\u0415\u0420\u041a\u0410] \u0412\u0440\u0430\u0433 "${name}" \u0432\u0441\u0451 \u0435\u0449\u0451 \u0442\u0443\u0442, \u0434\u0438\u0441\u0442\u0430\u043d\u0446\u0438\u044f ${Math.floor(dist)}`);
         break;
       }
     }
 
     if (enemyStillHere) {
-      log('[RECHECK] Enemy still on base. Shutting down.');
+      log('[\u041f\u0420\u041e\u0412\u0415\u0420\u041a\u0410] \u0412\u0440\u0430\u0433 \u043d\u0430 \u0431\u0430\u0437\u0435. \u0412\u044b\u043a\u043b\u044e\u0447\u0430\u0435\u043c\u0441\u044f.');
       sendTelegram(`[PRISSET BOT] \u0412\u0440\u0430\u0433 \u0432\u0441\u0435 \u0435\u0449\u0435 \u043d\u0430 \u0431\u0430\u0437\u0435. \u0411\u043e\u0442 \u043e\u0444\u0444.`);
       if (bot) bot.quit('Enemy still here');
       bot = null;
       reconnecting = false;
-      log('Bot stopped. Use /start to reconnect manually.');
+      log('\u0411\u043e\u0442 \u043e\u0441\u0442\u0430\u043d\u043e\u0432\u043b\u0435\u043d. /start \u0434\u043b\u044f \u043f\u0435\u0440\u0435\u043f\u043e\u0434\u043a\u043b\u044e\u0447\u0435\u043d\u0438\u044f.');
     } else {
-      log('[RECHECK] Clear! Resuming farm mode...');
+      log('[\u041f\u0420\u041e\u0412\u0415\u0420\u041a\u0410] \u0427\u0438\u0441\u0442\u043e! \u0412\u043e\u0437\u043e\u0431\u043d\u043e\u0432\u043b\u044f\u0435\u043c \u0444\u0430\u0440\u043c...');
       sendTelegram(`[PRISSET BOT] \u0411\u0430\u0437\u0430 \u0447\u0438\u0441\u0442\u0430. \u0424\u0430\u0440\u043c \u0432\u043e\u0437\u043e\u0431\u043d\u043e\u0432\u043b\u0435\u043d.`);
       reconnecting = false;
       lastEnemyName = null;
@@ -390,7 +433,6 @@ function startReconnectCheck() {
       defaultMove.allow1by1towers = false;
       bot.pathfinder.setMovements(defaultMove);
 
-      startAntiAfk();
       startGuardScan();
       startFarmLoop();
       startAutoEat();
@@ -398,12 +440,12 @@ function startReconnectCheck() {
 
       bot.on('health', () => tryAutoEat());
       bot.on('end', (reason) => {
-        log(`Disconnected: ${reason}`);
+        log(`\u041e\u0442\u043a\u043b\u044e\u0447\u0435\u043d\u043e: ${reason}`);
         cleanup();
         bot = null;
       });
       bot.on('kicked', (reason) => {
-        log(`Kicked: ${reason}`);
+        log(`\u041a\u0438\u043a\u043d\u0443\u0442: ${reason}`);
         cleanup();
       });
       bot.on('error', (err) => log(`Error: ${err.message}`));
@@ -412,7 +454,7 @@ function startReconnectCheck() {
         if (text.trim()) log(`[CHAT] ${text}`);
       });
 
-      log('Farm mode ACTIVE.');
+      log('\u0424\u0410\u0420\u041c \u0410\u041a\u0422\u0418\u0412\u0415\u041d.');
     }
   }
 }
@@ -432,7 +474,7 @@ function startFarmLoop() {
     if (statusLogCounter % 30 === 0) logInventoryStatus();
     farmTick();
   }, 1000);
-  log('Farm loop: scanning for mobs every 1s');
+  log('\u0424\u0430\u0440\u043c: \u043f\u043e\u0438\u0441\u043a \u043c\u043e\u0431\u043e\u0432 \u043a\u0430\u0436\u0434\u0443\u044e 1\u0441');
   logInventoryStatus();
 }
 
@@ -448,13 +490,14 @@ function stopFarmLoop() {
 
 function farmTick() {
   if (bot.pvp.target) return;
+  if (isAtSpawn()) return;
 
   const mob = findNearestHostile();
   if (!mob) return;
 
   const dist = bot.entity.position.distanceTo(mob.position);
   const allMobs = countNearbyHostiles();
-  log(`[FARM] Attacking ${mob.name} (dist: ${Math.floor(dist)}, mobs nearby: ${allMobs})`);
+  log(`[\u0424\u0410\u0420\u041c] \u0410\u0442\u0430\u043a\u0443\u0435\u043c ${ru(mob.name)} (\u0434\u0438\u0441\u0442: ${Math.floor(dist)}, \u043c\u043e\u0431\u043e\u0432 \u0440\u044f\u0434\u043e\u043c: ${allMobs})`);
 
   bot.pvp.attack(mob);
 }
@@ -464,23 +507,23 @@ function logInventoryStatus() {
 
   const mainHand = bot.heldItem;
   const offHand = bot.inventory.slots[45];
-  const mainStr = mainHand ? `${mainHand.name} x${mainHand.count}` : 'empty';
-  const offStr = offHand ? `${offHand.name} x${offHand.count}` : 'empty';
+  const mainStr = mainHand ? `${ru(mainHand.name)} x${mainHand.count}` : '\u043f\u0443\u0441\u0442\u043e';
+  const offStr = offHand ? `${ru(offHand.name)} x${offHand.count}` : '\u043f\u0443\u0441\u0442\u043e';
 
   const foods = bot.inventory.items().filter(i => FOOD_VALUES[i.name]);
   const foodStr = foods.length
-    ? foods.map(f => `${f.name} x${f.count}`).join(', ')
-    : 'none';
+    ? foods.map(f => `${ru(f.name)} x${f.count}`).join(', ')
+    : '\u043d\u0435\u0442';
 
   const swords = bot.inventory.items().filter(i => SWORD_TIERS.includes(i.name));
   const swordStr = swords.length
-    ? swords.map(s => `${s.name}`).join(', ')
-    : 'none';
+    ? swords.map(s => ru(s.name)).join(', ')
+    : '\u043d\u0435\u0442';
 
   const mobs = countNearbyHostiles();
 
-  log(`[STATUS] HP: ${Math.floor(bot.health)} | Food: ${bot.food} | Main: ${mainStr} | Offhand: ${offStr}`);
-  log(`[STATUS] Swords: ${swordStr} | Food items: ${foodStr} | Mobs nearby: ${mobs}`);
+  log(`[\u0421\u0422\u0410\u0422\u0423\u0421] \u0425\u041f: ${Math.floor(bot.health)} | \u0413\u043e\u043b\u043e\u0434: ${bot.food} | \u0420\u0443\u043a\u0430: ${mainStr} | \u041b\u0435\u0432\u0430\u044f: ${offStr}`);
+  log(`[\u0421\u0422\u0410\u0422\u0423\u0421] \u041c\u0435\u0447\u0438: ${swordStr} | \u0415\u0434\u0430: ${foodStr} | \u041c\u043e\u0431\u043e\u0432 \u0440\u044f\u0434\u043e\u043c: ${mobs}`);
 }
 
 function countNearbyHostiles() {
@@ -541,18 +584,18 @@ async function tryAutoEat() {
 
   const foodItem = findBestFood();
   if (!foodItem) {
-    log(`[EAT] No food in inventory! Hunger: ${bot.food}`);
+    log(`[\u0415\u0414\u0410] \u041d\u0435\u0442 \u0435\u0434\u044b \u0432 \u0438\u043d\u0432\u0435\u043d\u0442\u0430\u0440\u0435! \u0413\u043e\u043b\u043e\u0434: ${bot.food}`);
     return;
   }
 
   try {
-    log(`[EAT] Eating ${foodItem.name} x${foodItem.count} (hunger: ${bot.food})...`);
+    log(`[\u0415\u0414\u0410] \u0415\u043c ${ru(foodItem.name)} x${foodItem.count} (\u0433\u043e\u043b\u043e\u0434: ${bot.food})...`);
     await bot.equip(foodItem, 'hand');
     await bot.consume();
-    log(`[EAT] Done. Hunger now: ${bot.food}`);
+    log(`[\u0415\u0414\u0410] \u0413\u043e\u0442\u043e\u0432\u043e. \u0413\u043e\u043b\u043e\u0434: ${bot.food}`);
     equipBestSword();
   } catch (e) {
-    log(`[EAT] Interrupted: ${e.message}`);
+    log(`[\u0415\u0414\u0410] \u041f\u0440\u0435\u0440\u0432\u0430\u043d\u043e: ${e.message}`);
   }
 }
 
@@ -584,36 +627,10 @@ function equipBestSword() {
     const sword = bot.inventory.items().find(item => item.name === tier);
     if (sword) {
       bot.equip(sword, 'hand').then(() => {
-        log(`[EQUIP] ${tier}`);
+        log(`[\u042d\u041a\u0418\u041f] ${ru(tier)}`);
       }).catch(() => {});
       return;
     }
-  }
-}
-
-// =====================
-// ANTI-AFK
-// =====================
-
-function startAntiAfk() {
-  stopAntiAfk();
-  const intervalMs = (cfg.antiAfkIntervalSec || 45) * 1000;
-  antiAfkTimer = setInterval(() => {
-    if (!bot || !bot.entity) return;
-    const yaw = bot.entity.yaw + (Math.random() - 0.5) * 0.5;
-    bot.look(yaw, bot.entity.pitch, false);
-    bot.setControlState('sneak', true);
-    setTimeout(() => {
-      if (bot) bot.setControlState('sneak', false);
-    }, 200);
-  }, intervalMs);
-  log(`Anti-AFK: micro-movement every ${cfg.antiAfkIntervalSec}s`);
-}
-
-function stopAntiAfk() {
-  if (antiAfkTimer) {
-    clearInterval(antiAfkTimer);
-    antiAfkTimer = null;
   }
 }
 
@@ -718,22 +735,27 @@ function handleCommand(line) {
 
     case '/status':
       if (reconnecting) {
-        log('Status: WAITING TO RECONNECT (enemy detected)');
+        log('\u0421\u0442\u0430\u0442\u0443\u0441: \u0416\u0414\u0401\u041c \u0420\u0415\u041a\u041e\u041d\u041d\u0415\u041a\u0422 (\u0432\u0440\u0430\u0433 \u043e\u0431\u043d\u0430\u0440\u0443\u0436\u0435\u043d)');
       } else if (!bot) {
-        log('Status: OFFLINE');
+        log('\u0421\u0442\u0430\u0442\u0443\u0441: \u041e\u0424\u0424\u041b\u0410\u0419\u041d');
       } else {
-        const mode = farmActive ? 'FARMING' : guardActive ? 'GUARD' : 'CONNECTING';
-        log(`Status: ${mode}`);
+        const mode = farmActive ? '\u0424\u0410\u0420\u041c' : guardActive ? '\u041e\u0425\u0420\u0410\u041d\u0410' : '\u041f\u041e\u0414\u041a\u041b\u042e\u0427\u0415\u041d\u0418\u0415';
+        log(`\u0421\u0442\u0430\u0442\u0443\u0441: ${mode}`);
         if (bot.entity) {
           const pos = bot.entity.position;
-          log(`Position: X:${Math.floor(pos.x)} Y:${Math.floor(pos.y)} Z:${Math.floor(pos.z)}`);
+          log(`\u041f\u043e\u0437\u0438\u0446\u0438\u044f: X:${Math.floor(pos.x)} Y:${Math.floor(pos.y)} Z:${Math.floor(pos.z)}`);
         }
-        log(`Health: ${bot.health || '?'} | Food: ${bot.food || '?'}`);
+        log(`\u0425\u041f: ${bot.health || '?'} | \u0413\u043e\u043b\u043e\u0434: ${bot.food || '?'}`);
         if (bot.pvp && bot.pvp.target) {
-          log(`Fighting: ${bot.pvp.target.name || bot.pvp.target.displayName}`);
+          log(`\u0411\u044c\u0451\u0442: ${ru(bot.pvp.target.name) || bot.pvp.target.displayName}`);
+        }
+        if (bot.inventory) {
+          const mainHand = bot.heldItem;
+          const offHand = bot.inventory.slots[45];
+          log(`\u0420\u0443\u043a\u0430: ${mainHand ? ru(mainHand.name) : '\u043f\u0443\u0441\u0442\u043e'} | \u041b\u0435\u0432\u0430\u044f: ${offHand ? ru(offHand.name) : '\u043f\u0443\u0441\u0442\u043e'}`);
         }
         const players = Object.keys(bot.players).filter(n => n !== cfg.botNick);
-        log(`Players nearby: ${players.length ? players.join(', ') : 'none'}`);
+        log(`\u0418\u0433\u0440\u043e\u043a\u0438 \u0440\u044f\u0434\u043e\u043c: ${players.length ? players.join(', ') : '\u043d\u0435\u0442'}`);
       }
       break;
 
