@@ -762,7 +762,7 @@ async function tryAutoEat() {
       return;
     }
     lastChestFoodSearchTime = now;
-    log(`[\u0415\u0414\u0410] \u041d\u0435\u0442 \u0435\u0434\u044b \u0432 \u0438\u043d\u0432\u0435\u043d\u0442\u0430\u0440\u0435, \u0438\u0449\u0443 \u0432 \u0441\u0443\u043d\u0434\u0443\u043a\u0430\u0445...');
+    log(`[\u0415\u0414\u0410] \u041d\u0435\u0442 \u0435\u0434\u044b \u0432 \u0438\u043d\u0432\u0435\u043d\u0442\u0430\u0440\u0435, \u0438\u0449\u0443 \u0432 \u0441\u0443\u043d\u0434\u0443\u043a\u0430\u0445...`);
     const found = await takeFoodFromChest();
     if (found) {
       foodItem = findBestFood();
