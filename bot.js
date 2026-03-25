@@ -1,15 +1,44 @@
 import mineflayer from 'mineflayer';
+import pathfinderPkg from 'mineflayer-pathfinder';
+import pvpPkg from 'mineflayer-pvp';
+import mcDataLoader from 'minecraft-data';
 import { createInterface } from 'readline';
 import https from 'https';
 import * as settings from './settings.js';
 
+const { pathfinder, Movements } = pathfinderPkg;
+const pvpPlugin = pvpPkg.plugin;
+
 const cfg = settings.load();
 let bot = null;
 let guardActive = false;
+let farmActive = false;
 let antiAfkTimer = null;
 let guardScanTimer = null;
+let farmLoopTimer = null;
+let autoEatTimer = null;
 let navigationDone = false;
 let spawnHandled = false;
+let reconnecting = false;
+let lastEnemyName = null;
+
+const HOSTILE_MOBS = new Set([
+  'zombie', 'skeleton', 'spider', 'cave_spider', 'creeper',
+  'enderman', 'witch', 'slime', 'magma_cube', 'phantom',
+  'drowned', 'husk', 'stray', 'zombie_villager', 'pillager',
+  'vindicator', 'evoker', 'ravager', 'hoglin', 'piglin_brute',
+  'warden', 'blaze', 'ghast', 'wither_skeleton'
+]);
+
+const SWORD_TIERS = ['netherite_sword', 'diamond_sword', 'iron_sword', 'stone_sword', 'golden_sword', 'wooden_sword'];
+const FOOD_VALUES = {
+  'golden_carrot': 6, 'cooked_beef': 8, 'cooked_porkchop': 8,
+  'cooked_mutton': 6, 'cooked_salmon': 6, 'cooked_chicken': 6,
+  'cooked_rabbit': 5, 'cooked_cod': 5, 'bread': 5, 'baked_potato': 5,
+  'beetroot_soup': 6, 'mushroom_stew': 6, 'rabbit_stew': 10,
+  'apple': 4, 'melon_slice': 2, 'sweet_berries': 2,
+  'dried_kelp': 1, 'carrot': 3, 'potato': 1
+};
 
 const log = (msg) => console.log(`[${new Date().toLocaleTimeString()}] ${msg}`);
 
@@ -30,10 +59,20 @@ function sendTelegram(text) {
   req.end();
 }
 
+function sleep(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+// =====================
+// BOT LIFECYCLE
+// =====================
+
 function startBot() {
   navigationDone = false;
   guardActive = false;
+  farmActive = false;
   spawnHandled = false;
+  reconnecting = false;
 
   log(`Connecting as "${cfg.botNick}" to ${cfg.serverHost}:${cfg.serverPort}...`);
 
@@ -45,6 +84,9 @@ function startBot() {
     auth: 'offline',
     hideErrors: false
   });
+
+  bot.loadPlugin(pathfinder);
+  bot.loadPlugin(pvpPlugin);
 
   bot.on('login', () => {
     log('Logged in to server!');
@@ -63,37 +105,19 @@ function startBot() {
     handleWindow(window);
   });
 
-  bot._client.on('open_window', (packet) => {
-    log(`[RAW] open_window packet: windowId=${packet.windowId} type=${packet.inventoryType} title=${JSON.stringify(packet.windowTitle)}`);
-  });
-
-  bot.on('entitySpawned', (entity) => {
-    if (entity.type === 'player') {
-      log(`[ENTITY] spawned: ${entity.username || 'null'} id=${entity.id}`);
-    }
-  });
-
-  bot.on('playerJoined', (player) => {
-    log(`[TAB] Player joined: ${player.username}`);
-  });
-
-  bot.on('playerLeft', (player) => {
-    log(`[TAB] Player left: ${player.username}`);
+  bot.on('health', () => {
+    tryAutoEat();
   });
 
   bot.on('end', (reason) => {
     log(`Disconnected: ${reason}`);
-    stopAntiAfk();
-    stopGuardScan();
-    guardActive = false;
+    cleanup();
     bot = null;
   });
 
   bot.on('kicked', (reason) => {
     log(`Kicked: ${reason}`);
-    stopAntiAfk();
-    stopGuardScan();
-    guardActive = false;
+    cleanup();
   });
 
   bot.on('error', (err) => {
@@ -106,9 +130,21 @@ function startBot() {
   });
 }
 
+function cleanup() {
+  stopAntiAfk();
+  stopGuardScan();
+  stopFarmLoop();
+  stopAutoEat();
+  guardActive = false;
+  farmActive = false;
+}
+
+// =====================
+// NAVIGATION (hub -> anarchy)
+// =====================
+
 async function navigateToAnarchy() {
   if (navigationDone) return;
-
   try {
     log('Sending /anarchy command...');
     bot.chat('/anarchy');
@@ -121,7 +157,6 @@ async function navigateToAnarchy() {
 function handleWindow(window) {
   const title = window.title ? JSON.stringify(window.title) : '';
   log(`Window opened: ${title} (${window.slots.length} slots)`);
-
   logWindowSlots(window);
 
   let slot = findSlotWithCount(window, 2);
@@ -179,10 +214,26 @@ function logWindowSlots(window) {
 function onNavigationDone() {
   navigationDone = true;
   guardActive = true;
-  log('Guard mode ACTIVE. Monitoring for enemies...');
+  farmActive = true;
+  log('Farm mode ACTIVE. Hunting mobs + guarding...');
+
+  const mcData = mcDataLoader(bot.version);
+  const defaultMove = new Movements(bot, mcData);
+  defaultMove.canDig = false;
+  defaultMove.allow1by1towers = false;
+  bot.pathfinder.setMovements(defaultMove);
+
   startAntiAfk();
   startGuardScan();
+  startFarmLoop();
+  startAutoEat();
+
+  equipBestSword();
 }
+
+// =====================
+// GUARD (enemy detection)
+// =====================
 
 function startGuardScan() {
   stopGuardScan();
@@ -213,11 +264,290 @@ function scanNearbyPlayers() {
     const dist = bot.entity.position.distanceTo(playerData.entity.position);
     if (dist > 200) continue;
 
-    log(`[SCAN] Enemy "${name}" at distance ${Math.floor(dist)}!`);
-    checkPlayer(name, playerData.entity.position);
+    log(`[GUARD] Enemy "${name}" at distance ${Math.floor(dist)}!`);
+    handleEnemyDetected(name, playerData.entity.position);
     return;
   }
 }
+
+async function handleEnemyDetected(username, entityPos) {
+  guardActive = false;
+  farmActive = false;
+  stopFarmLoop();
+
+  const selfName = cfg.botNick;
+  const enemyPos = `X: ${Math.floor(entityPos.x)}, Y: ${Math.floor(entityPos.y)}, Z: ${Math.floor(entityPos.z)}`;
+  let botPos = 'unknown';
+  if (bot && bot.entity) {
+    const pos = bot.entity.position;
+    botPos = `X: ${Math.floor(pos.x)}, Y: ${Math.floor(pos.y)}, Z: ${Math.floor(pos.z)}`;
+  }
+
+  const tgText = `[PRISSET BOT] \u0412\u0430\u0441 \u0440\u0435\u0439\u0434\u044f\u0442!\n\u0420\u0435\u0439\u0434\u0435\u0440: ${username}\n\u041a\u043e\u043e\u0440\u0434\u0438\u043d\u0430\u0442\u044b \u0440\u0435\u0439\u0434\u0435\u0440\u0430: ${enemyPos}\n\u041a\u043e\u043e\u0440\u0434\u0438\u043d\u0430\u0442\u044b \u0431\u043e\u0442\u0430: ${botPos}\n\u0411\u043e\u0442: ${selfName}`;
+  sendTelegram(tgText);
+
+  log(`ENEMY: ${username} at ${enemyPos}. Disconnecting...`);
+  lastEnemyName = username;
+
+  if (bot) {
+    try { bot.pvp.stop(); } catch {}
+    bot.quit('Raid detected');
+  }
+
+  log('Waiting 2 minutes before reconnect attempt...');
+  reconnecting = true;
+  await sleep(120000);
+
+  if (!reconnecting) return;
+
+  log('Reconnecting to check if enemy left...');
+  startReconnectCheck();
+}
+
+function startReconnectCheck() {
+  bot = mineflayer.createBot({
+    host: cfg.serverHost,
+    port: cfg.serverPort,
+    username: cfg.botNick,
+    version: cfg.version,
+    auth: 'offline',
+    hideErrors: false
+  });
+
+  bot.loadPlugin(pathfinder);
+  bot.loadPlugin(pvpPlugin);
+
+  let checkDone = false;
+
+  bot.on('login', () => {
+    log('[RECHECK] Logged in, sending /anarchy...');
+    setTimeout(() => {
+      if (bot) bot.chat('/anarchy');
+    }, 8000);
+  });
+
+  bot.on('windowOpen', (window) => {
+    let slot = findSlotWithCount(window, 2);
+    if (slot === null) slot = findSlotByName(window, ['2']);
+    if (slot === null) slot = 12;
+
+    setTimeout(() => {
+      if (bot) bot.clickWindow(slot, 0, 0);
+      setTimeout(() => recheckEnemies(), 5000);
+    }, 500);
+  });
+
+  bot.on('end', () => {
+    if (!checkDone) {
+      log('[RECHECK] Disconnected unexpectedly');
+      bot = null;
+      reconnecting = false;
+    }
+  });
+
+  bot.on('error', (err) => {
+    log(`[RECHECK] Error: ${err.message}`);
+  });
+
+  function recheckEnemies() {
+    if (!bot || checkDone) return;
+    checkDone = true;
+
+    let enemyStillHere = false;
+    for (const name of Object.keys(bot.players)) {
+      if (name === cfg.botNick) continue;
+      if (settings.shouldIgnore(name)) continue;
+      const pd = bot.players[name];
+      if (!pd || !pd.entity) continue;
+      const dist = bot.entity ? bot.entity.position.distanceTo(pd.entity.position) : 999;
+      if (dist <= 200) {
+        enemyStillHere = true;
+        log(`[RECHECK] Enemy "${name}" still here at distance ${Math.floor(dist)}`);
+        break;
+      }
+    }
+
+    if (enemyStillHere) {
+      log('[RECHECK] Enemy still on base. Shutting down.');
+      sendTelegram(`[PRISSET BOT] \u0412\u0440\u0430\u0433 \u0432\u0441\u0435 \u0435\u0449\u0435 \u043d\u0430 \u0431\u0430\u0437\u0435. \u0411\u043e\u0442 \u043e\u0444\u0444.`);
+      if (bot) bot.quit('Enemy still here');
+      bot = null;
+      reconnecting = false;
+      log('Bot stopped. Use /start to reconnect manually.');
+    } else {
+      log('[RECHECK] Clear! Resuming farm mode...');
+      sendTelegram(`[PRISSET BOT] \u0411\u0430\u0437\u0430 \u0447\u0438\u0441\u0442\u0430. \u0424\u0430\u0440\u043c \u0432\u043e\u0437\u043e\u0431\u043d\u043e\u0432\u043b\u0435\u043d.`);
+      reconnecting = false;
+      lastEnemyName = null;
+
+      navigationDone = true;
+      guardActive = true;
+      farmActive = true;
+
+      const mcData = mcDataLoader(bot.version);
+      const defaultMove = new Movements(bot, mcData);
+      defaultMove.canDig = false;
+      defaultMove.allow1by1towers = false;
+      bot.pathfinder.setMovements(defaultMove);
+
+      startAntiAfk();
+      startGuardScan();
+      startFarmLoop();
+      startAutoEat();
+      equipBestSword();
+
+      bot.on('health', () => tryAutoEat());
+      bot.on('end', (reason) => {
+        log(`Disconnected: ${reason}`);
+        cleanup();
+        bot = null;
+      });
+      bot.on('kicked', (reason) => {
+        log(`Kicked: ${reason}`);
+        cleanup();
+      });
+      bot.on('error', (err) => log(`Error: ${err.message}`));
+      bot.on('message', (msg) => {
+        const text = msg.toString();
+        if (text.trim()) log(`[CHAT] ${text}`);
+      });
+
+      log('Farm mode ACTIVE.');
+    }
+  }
+}
+
+// =====================
+// FARMING (mob hunting)
+// =====================
+
+function startFarmLoop() {
+  stopFarmLoop();
+  farmLoopTimer = setInterval(() => {
+    if (!bot || !farmActive || !bot.entity) return;
+    farmTick();
+  }, 1000);
+  log('Farm loop: scanning for mobs every 1s');
+}
+
+function stopFarmLoop() {
+  if (farmLoopTimer) {
+    clearInterval(farmLoopTimer);
+    farmLoopTimer = null;
+  }
+  if (bot) {
+    try { bot.pvp.stop(); } catch {}
+  }
+}
+
+function farmTick() {
+  if (bot.pvp.target) return;
+
+  const mob = findNearestHostile();
+  if (!mob) return;
+
+  const dist = bot.entity.position.distanceTo(mob.position);
+  log(`[FARM] Attacking ${mob.name || mob.displayName} at distance ${Math.floor(dist)}`);
+
+  bot.pvp.attack(mob);
+}
+
+function findNearestHostile() {
+  if (!bot || !bot.entity) return null;
+
+  let nearest = null;
+  let nearestDist = 32;
+
+  for (const entity of Object.values(bot.entities)) {
+    if (!entity || entity === bot.entity) continue;
+    if (!entity.name || !HOSTILE_MOBS.has(entity.name)) continue;
+    if (!entity.position) continue;
+
+    const dist = bot.entity.position.distanceTo(entity.position);
+    if (dist < nearestDist) {
+      nearestDist = dist;
+      nearest = entity;
+    }
+  }
+
+  return nearest;
+}
+
+// =====================
+// AUTO-EAT
+// =====================
+
+function startAutoEat() {
+  stopAutoEat();
+  autoEatTimer = setInterval(() => {
+    if (!bot || !bot.entity) return;
+    tryAutoEat();
+  }, 3000);
+}
+
+function stopAutoEat() {
+  if (autoEatTimer) {
+    clearInterval(autoEatTimer);
+    autoEatTimer = null;
+  }
+}
+
+async function tryAutoEat() {
+  if (!bot || !bot.entity) return;
+  if (bot.food >= 20) return;
+  if (bot.pvp && bot.pvp.target) return;
+
+  const foodItem = findBestFood();
+  if (!foodItem) return;
+
+  try {
+    await bot.equip(foodItem, 'hand');
+    await bot.consume();
+    log(`[EAT] Ate ${foodItem.name}, hunger: ${bot.food}`);
+    equipBestSword();
+  } catch (e) {
+    // eating interrupted, not critical
+  }
+}
+
+function findBestFood() {
+  if (!bot || !bot.inventory) return null;
+
+  let best = null;
+  let bestVal = -1;
+
+  for (const item of bot.inventory.items()) {
+    const val = FOOD_VALUES[item.name];
+    if (val && val > bestVal) {
+      bestVal = val;
+      best = item;
+    }
+  }
+
+  return best;
+}
+
+// =====================
+// SWORD EQUIP
+// =====================
+
+function equipBestSword() {
+  if (!bot || !bot.inventory) return;
+
+  for (const tier of SWORD_TIERS) {
+    const sword = bot.inventory.items().find(item => item.name === tier);
+    if (sword) {
+      bot.equip(sword, 'hand').then(() => {
+        log(`[EQUIP] ${tier}`);
+      }).catch(() => {});
+      return;
+    }
+  }
+}
+
+// =====================
+// ANTI-AFK
+// =====================
 
 function startAntiAfk() {
   stopAntiAfk();
@@ -241,30 +571,9 @@ function stopAntiAfk() {
   }
 }
 
-function checkPlayer(username, entityPos) {
-  log(`ENEMY DETECTED: ${username}! Disconnecting...`);
-
-  const selfName = cfg.botNick;
-  const enemyPos = `X: ${Math.floor(entityPos.x)}, Y: ${Math.floor(entityPos.y)}, Z: ${Math.floor(entityPos.z)}`;
-
-  let botPos = 'unknown';
-  if (bot && bot.entity) {
-    const pos = bot.entity.position;
-    botPos = `X: ${Math.floor(pos.x)}, Y: ${Math.floor(pos.y)}, Z: ${Math.floor(pos.z)}`;
-  }
-
-  const tgText = `[PRISSET BOT] \u0412\u0430\u0441 \u0440\u0435\u0439\u0434\u044f\u0442!\n\u0420\u0435\u0439\u0434\u0435\u0440: ${username}\n\u041a\u043e\u043e\u0440\u0434\u0438\u043d\u0430\u0442\u044b \u0440\u0435\u0439\u0434\u0435\u0440\u0430: ${enemyPos}\n\u041a\u043e\u043e\u0440\u0434\u0438\u043d\u0430\u0442\u044b \u0431\u043e\u0442\u0430: ${botPos}\n\u0411\u043e\u0442: ${selfName}`;
-  sendTelegram(tgText);
-
-  log(`Raider: ${username} at ${enemyPos}`);
-  if (bot) bot.quit('Raid detected');
-}
-
-function sleep(ms) {
-  return new Promise(resolve => setTimeout(resolve, ms));
-}
-
-// === Console commands ===
+// =====================
+// CONSOLE COMMANDS
+// =====================
 
 const rl = createInterface({ input: process.stdin, output: process.stdout });
 
@@ -351,22 +660,31 @@ function handleCommand(line) {
 
     case '/start':
       if (bot) { log('Already connected! Use /stop first'); break; }
+      reconnecting = false;
       startBot();
       break;
 
     case '/stop':
+      reconnecting = false;
       if (!bot) { log('Not connected'); break; }
       bot.quit('Manual stop');
       break;
 
     case '/status':
-      if (!bot) {
+      if (reconnecting) {
+        log('Status: WAITING TO RECONNECT (enemy detected)');
+      } else if (!bot) {
         log('Status: OFFLINE');
       } else {
-        log(`Status: ${guardActive ? 'GUARD ACTIVE' : 'CONNECTING/NAVIGATING'}`);
+        const mode = farmActive ? 'FARMING' : guardActive ? 'GUARD' : 'CONNECTING';
+        log(`Status: ${mode}`);
         if (bot.entity) {
           const pos = bot.entity.position;
           log(`Position: X:${Math.floor(pos.x)} Y:${Math.floor(pos.y)} Z:${Math.floor(pos.z)}`);
+        }
+        log(`Health: ${bot.health || '?'} | Food: ${bot.food || '?'}`);
+        if (bot.pvp && bot.pvp.target) {
+          log(`Fighting: ${bot.pvp.target.name || bot.pvp.target.displayName}`);
         }
         const players = Object.keys(bot.players).filter(n => n !== cfg.botNick);
         log(`Players nearby: ${players.length ? players.join(', ') : 'none'}`);
@@ -378,6 +696,7 @@ function handleCommand(line) {
       break;
 
     case '/quit':
+      reconnecting = false;
       if (bot) bot.quit('Shutdown');
       log('Bye!');
       process.exit(0);
@@ -393,10 +712,12 @@ function handleCommand(line) {
   }
 }
 
-// === Main ===
+// =====================
+// MAIN
+// =====================
 
 console.log('');
-console.log('  PRISSET BOT v1.0.0');
+console.log('  PRISSET BOT v2.0.0 (Farm Edition)');
 console.log('  Type /help for commands');
 console.log('  Type /settings to configure');
 console.log('  Type /start to connect');
