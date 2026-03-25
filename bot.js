@@ -861,6 +861,10 @@ async function takeFoodFromChest() {
 
   for (const chest of chests) {
     try {
+      const chestCenter = chest.position.offset(0.5, 0.5, 0.5);
+      await bot.lookAt(chestCenter);
+      await sleep(200);
+
       const container = await bot.openContainer(chest);
       if (!container) continue;
 
@@ -935,6 +939,10 @@ async function manageInventory() {
     if (chests.length > 0) {
       for (const chest of chests) {
         try {
+          const chestCenter = chest.position.offset(0.5, 0.5, 0.5);
+          await bot.lookAt(chestCenter);
+          await sleep(200);
+
           const container = await bot.openContainer(chest);
           if (!container) continue;
 
