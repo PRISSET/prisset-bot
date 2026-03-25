@@ -826,16 +826,26 @@ function openChest(block) {
   return new Promise((resolve, reject) => {
     const timeout = setTimeout(() => {
       bot.removeListener('windowOpen', onOpen);
+      log(`[\u0421\u0423\u041d\u0414\u0423\u041a] \u0422\u0430\u0439\u043c\u0430\u0443\u0442, \u0431\u043b\u043e\u043a: ${block.name} \u043d\u0430 ${block.position}`);
       reject(new Error('timeout 3s'));
-    }, 3000);
+    }, 5000);
 
     function onOpen(window) {
       clearTimeout(timeout);
+      log(`[\u0421\u0423\u041d\u0414\u0423\u041a] \u041e\u043a\u043d\u043e \u043e\u0442\u043a\u0440\u044b\u043b\u043e\u0441\u044c: ${window.type}, \u0441\u043b\u043e\u0442\u043e\u0432: ${window.slots.length}`);
       resolve(window);
     }
 
     bot.once('windowOpen', onOpen);
-    bot.activateBlock(block);
+
+    try {
+      bot.activateBlock(block);
+      log(`[\u0421\u0423\u041d\u0414\u0423\u041a] activateBlock \u043e\u0442\u043f\u0440\u0430\u0432\u043b\u0435\u043d`);
+    } catch (e) {
+      clearTimeout(timeout);
+      bot.removeListener('windowOpen', onOpen);
+      reject(e);
+    }
   });
 }
 
@@ -881,8 +891,15 @@ async function takeFoodFromChest() {
       const chestCenter = chest.position.offset(0.5, 0.5, 0.5);
       const dist = bot.entity.position.distanceTo(chest.position);
       log(`[\u0421\u0423\u041d\u0414\u0423\u041a] \u041e\u0442\u043a\u0440\u044b\u0432\u0430\u044e ${chest.name} \u043d\u0430 ${dist.toFixed(1)} \u0431\u043b.`);
+
+      const emptySlot = bot.inventory.firstEmptyHotbarSlot();
+      if (emptySlot !== null) {
+        bot.setQuickBarSlot(emptySlot);
+      }
+      await sleep(100);
+
       await bot.lookAt(chestCenter);
-      await sleep(200);
+      await sleep(300);
 
       const window = await openChest(chest);
       if (!window) continue;
@@ -962,8 +979,15 @@ async function manageInventory() {
       for (const chest of chests) {
         try {
           const chestCenter = chest.position.offset(0.5, 0.5, 0.5);
+
+          const emptySlot = bot.inventory.firstEmptyHotbarSlot();
+          if (emptySlot !== null) {
+            bot.setQuickBarSlot(emptySlot);
+          }
+          await sleep(100);
+
           await bot.lookAt(chestCenter);
-          await sleep(200);
+          await sleep(300);
 
           const window = await openChest(chest);
           if (!window) continue;
