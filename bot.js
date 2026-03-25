@@ -894,7 +894,7 @@ async function takeFoodFromChest() {
 
       const emptySlot = bot.inventory.firstEmptyHotbarSlot();
       if (emptySlot !== null) {
-        bot.setQuickBarSlot(emptySlot);
+        bot.setQuickBarSlot(emptySlot - bot.inventory.hotbarStart);
       }
       await sleep(100);
 
@@ -982,7 +982,7 @@ async function manageInventory() {
 
           const emptySlot = bot.inventory.firstEmptyHotbarSlot();
           if (emptySlot !== null) {
-            bot.setQuickBarSlot(emptySlot);
+            bot.setQuickBarSlot(emptySlot - bot.inventory.hotbarStart);
           }
           await sleep(100);
 
