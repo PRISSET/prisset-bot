@@ -159,20 +159,7 @@ function startBot() {
   bot.on('login', () => {
     log('\u0412\u043e\u0448\u043b\u0438 \u043d\u0430 \u0441\u0435\u0440\u0432\u0435\u0440!');
 
-    bot._client.on('open_window', (packet) => {
-      log(`[DEBUG] raw open_window: id=${packet.windowId} type=${packet.inventoryType} title=${packet.windowTitle} slots=${packet.slotCount}`);
-    });
-    bot._client.on('close_window', (packet) => {
-      log(`[DEBUG] raw close_window: id=${packet.windowId}`);
-    });
-    bot._client.on('window_items', (packet) => {
-      log(`[DEBUG] raw window_items: wid=${packet.windowId} items=${packet.items ? packet.items.length : '?'}`);
-    });
-    bot._client.on('set_slot', (packet) => {
-      if (packet.windowId !== 0) {
-        log(`[DEBUG] raw set_slot: wid=${packet.windowId} slot=${packet.slot} item=${packet.item?.blockId || 'empty'}`);
-      }
-    });
+
 
     if (!navigationDone && !spawnHandled) {
       log('\u0416\u0434\u0451\u043c 8 \u0441\u0435\u043a \u0437\u0430\u0433\u0440\u0443\u0437\u043a\u0443, \u043f\u043e\u0442\u043e\u043c /anarchy...');
@@ -855,29 +842,24 @@ function openChest(block) {
     }
 
     const timeout = setTimeout(() => {
-      log(`[\u0421\u0423\u041d\u0414\u0423\u041a] \u0422\u0430\u0439\u043c\u0430\u0443\u0442, \u0431\u043b\u043e\u043a: ${block.name} \u043d\u0430 ${block.position}`);
       if (windowId !== null && bot.currentWindow) {
-        log(`[\u0421\u0423\u041d\u0414\u0423\u041a] \u041d\u043e \u043e\u043a\u043d\u043e \u0435\u0441\u0442\u044c (id=${bot.currentWindow.id}), \u0438\u0441\u043f\u043e\u043b\u044c\u0437\u0443\u0435\u043c \u0435\u0433\u043e`);
         done(null, bot.currentWindow);
         return;
       }
+      log(`[\u0421\u0423\u041d\u0414\u0423\u041a] \u0422\u0430\u0439\u043c\u0430\u0443\u0442 \u043e\u0442\u043a\u0440\u044b\u0442\u0438\u044f ${block.name} \u043d\u0430 ${block.position}`);
       done(new Error('timeout 8s'));
     }, 8000);
 
     function onOpenRaw(packet) {
       if (resolved) return;
       windowId = packet.windowId;
-      log(`[\u0421\u0423\u041d\u0414\u0423\u041a] open_window: id=${packet.windowId}, type=${packet.inventoryType}`);
     }
 
     function onItems(packet) {
       if (resolved) return;
       if (packet.windowId === 0) return;
-      log(`[\u0421\u0423\u041d\u0414\u0423\u041a] window_items: wid=${packet.windowId}, items=${packet.items.length}`);
       setTimeout(() => {
-        if (bot.currentWindow) {
-          done(null, bot.currentWindow);
-        }
+        if (bot.currentWindow) done(null, bot.currentWindow);
       }, 300);
     }
 
@@ -891,10 +873,7 @@ function openChest(block) {
       if (setSlotTimer) clearTimeout(setSlotTimer);
       setSlotTimer = setTimeout(() => {
         if (resolved) return;
-        log(`[\u0421\u0423\u041d\u0414\u0423\u041a] set_slot x${setSlotCount} \u0434\u043b\u044f wid=${packet.windowId}`);
-        if (bot.currentWindow) {
-          done(null, bot.currentWindow);
-        }
+        if (bot.currentWindow) done(null, bot.currentWindow);
       }, 500);
     }
 
@@ -905,7 +884,6 @@ function openChest(block) {
     try {
       const pos = block.position;
       await bot.lookAt(pos.offset(0.5, 0.5, 0.5), true);
-
       bot._client.write('block_place', {
         location: pos,
         direction: 1,
@@ -917,7 +895,6 @@ function openChest(block) {
         sequence: 0
       });
       bot.swingArm();
-      log(`[\u0421\u0423\u041d\u0414\u0423\u041a] block_place \u043e\u0442\u043f\u0440\u0430\u0432\u043b\u0435\u043d \u043d\u0430 ${pos}`);
     } catch (e) {
       done(e);
     }
