@@ -650,6 +650,7 @@ function stopAutoEat() {
 
 let isEating = false;
 let lastHealth = 20;
+let lastHungryTgTime = 0;
 
 function checkPlayerDamage() {
   if (!bot || !bot.entity || !guardActive) return;
@@ -699,7 +700,20 @@ async function tryAutoEat() {
 
   const foodItem = findBestFood();
   if (!foodItem) {
-    log(`[\u0415\u0414\u0410] \u041d\u0435\u0442 \u0435\u0434\u044b \u0432 \u0438\u043d\u0432\u0435\u043d\u0442\u0430\u0440\u0435! \u0413\u043e\u043b\u043e\u0434: ${bot.food}`);
+    log(`[\u0415\u0414\u0410] \u041d\u0435\u0442 \u0435\u0434\u044b! \u0413\u043e\u043b\u043e\u0434: ${bot.food}`);
+    const now = Date.now();
+    if (now - lastHungryTgTime > 5 * 60 * 1000) {
+      lastHungryTgTime = now;
+      sendTelegram(`[PRISSET BOT] \u044f \u0445\u043e\u0447\u0443 \u0416\u0420\u0410\u0422\u042c \u0414\u0410\u0419\u0422\u0415 \u041f\u041e\u0416\u0420\u0410\u0422\u042c \u041c\u041d\u0415\n\u0413\u043e\u043b\u043e\u0434: ${bot.food}/20`);
+    }
+    if (bot.food <= 6) {
+      log(`[\u0415\u0414\u0410] \u041a\u0440\u0438\u0442\u0438\u0447\u0435\u0441\u043a\u0438\u0439 \u0433\u043e\u043b\u043e\u0434 (${bot.food}), \u043d\u0435\u0442 \u0435\u0434\u044b. \u041e\u0442\u043a\u043b\u044e\u0447\u0430\u0435\u043c\u0441\u044f!`);
+      sendTelegram(`[PRISSET BOT] \u041a\u0440\u0438\u0442\u0438\u0447\u0435\u0441\u043a\u0438\u0439 \u0433\u043e\u043b\u043e\u0434 (${bot.food}/20), \u0435\u0434\u044b \u043d\u0435\u0442. \u0411\u043e\u0442 \u043e\u0442\u043a\u043b\u044e\u0447\u0438\u043b\u0441\u044f.`);
+      if (bot) bot.quit('No food, starving');
+      cleanup();
+      bot = null;
+      log('\u0411\u043e\u0442 \u043e\u0441\u0442\u0430\u043d\u043e\u0432\u043b\u0435\u043d. /start \u0434\u043b\u044f \u043f\u0435\u0440\u0435\u0437\u0430\u043f\u0443\u0441\u043a\u0430.');
+    }
     return;
   }
 
