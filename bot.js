@@ -536,6 +536,12 @@ function logInventoryStatus() {
   log(`[\u0421\u0422\u0410\u0422\u0423\u0421] \u0425\u041f: ${Math.floor(bot.health)} | \u0413\u043e\u043b\u043e\u0434: ${bot.food} | \u0420\u0443\u043a\u0430: ${mainStr} | \u041b\u0435\u0432\u0430\u044f: ${offStr}`);
   log(`[\u0421\u0422\u0410\u0422\u0423\u0421] \u041c\u0435\u0447\u0438: ${swordStr} | \u0415\u0434\u0430: ${foodStr} | \u041c\u043e\u0431\u043e\u0432 \u0440\u044f\u0434\u043e\u043c: ${mobs}`);
 
+  const allItems = bot.inventory.slots
+    .filter(s => s !== null && s !== undefined)
+    .map(s => `${s.name}(${s.slot})`)
+    .join(', ');
+  log(`[\u0418\u041d\u0412\u0415\u041d\u0422\u0410\u0420\u042c] ${allItems || '\u043f\u0443\u0441\u0442\u043e'}`);
+
   if (mobs === 0) {
     const nearby = {};
     for (const entity of Object.values(bot.entities)) {
