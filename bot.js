@@ -635,7 +635,7 @@ let isEating = false;
 
 async function tryAutoEat() {
   if (!bot || !bot.entity) return;
-  if (bot.food >= 18) return;
+  if (bot.food >= 14) return;
   if (isEating) return;
 
   const foodItem = findBestFood();
