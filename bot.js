@@ -26,7 +26,10 @@ const HOSTILE_MOBS = new Set([
   'enderman', 'witch', 'slime', 'magma_cube', 'phantom',
   'drowned', 'husk', 'stray', 'zombie_villager', 'pillager',
   'vindicator', 'evoker', 'ravager', 'hoglin', 'piglin_brute',
-  'warden', 'blaze', 'ghast', 'wither_skeleton'
+  'warden', 'blaze', 'ghast', 'wither_skeleton',
+  'zombified_piglin', 'piglin', 'silverfish', 'endermite',
+  'guardian', 'elder_guardian', 'shulker', 'vex',
+  'zombie_pigman'
 ]);
 
 const SWORD_TIERS = ['netherite_sword', 'diamond_sword', 'iron_sword', 'stone_sword', 'golden_sword', 'wooden_sword'];
@@ -43,7 +46,15 @@ const MOB_NAMES_RU = {
   'evoker': '\u0432\u044b\u0437\u044b\u0432\u0430\u0442\u0435\u043b\u044c', 'ravager': '\u0440\u0430\u0437\u043e\u0440\u0438\u0442\u0435\u043b\u044c',
   'hoglin': '\u0445\u043e\u0433\u043b\u0438\u043d', 'piglin_brute': '\u043f\u0438\u0433\u043b\u0438\u043d-\u0433\u0440\u0443\u0431\u0438\u044f\u043d',
   'warden': '\u0441\u0442\u0440\u0430\u0436', 'blaze': '\u0431\u043b\u0435\u0439\u0437',
-  'ghast': '\u0433\u0430\u0441\u0442', 'wither_skeleton': '\u0441\u043a\u0435\u043b\u0435\u0442-\u0438\u0441\u0441\u0443\u0448\u0438\u0442\u0435\u043b\u044c'
+  'ghast': '\u0433\u0430\u0441\u0442', 'wither_skeleton': '\u0441\u043a\u0435\u043b\u0435\u0442-\u0438\u0441\u0441\u0443\u0448\u0438\u0442\u0435\u043b\u044c',
+  'zombified_piglin': '\u0437\u043e\u043c\u0431\u0438-\u043f\u0438\u0433\u043b\u0438\u043d',
+  'zombie_pigman': '\u0437\u043e\u043c\u0431\u0438-\u0441\u0432\u0438\u043d\u043e\u0447\u0435\u043b\u043e\u0432\u0435\u043a',
+  'piglin': '\u043f\u0438\u0433\u043b\u0438\u043d',
+  'silverfish': '\u0447\u0435\u0440\u0434\u0430\u0447\u043e\u043a',
+  'endermite': '\u044d\u043d\u0434\u0435\u0440\u043c\u0438\u0442',
+  'guardian': '\u0441\u0442\u0440\u0430\u0436 \u043e\u043a\u0435\u0430\u043d\u0430',
+  'elder_guardian': '\u0434\u0440\u0435\u0432\u043d\u0438\u0439 \u0441\u0442\u0440\u0430\u0436',
+  'shulker': '\u0448\u0430\u043b\u043a\u0435\u0440', 'vex': '\u0432\u0435\u043a\u0441'
 };
 
 const ITEM_NAMES_RU = {
@@ -524,6 +535,17 @@ function logInventoryStatus() {
 
   log(`[\u0421\u0422\u0410\u0422\u0423\u0421] \u0425\u041f: ${Math.floor(bot.health)} | \u0413\u043e\u043b\u043e\u0434: ${bot.food} | \u0420\u0443\u043a\u0430: ${mainStr} | \u041b\u0435\u0432\u0430\u044f: ${offStr}`);
   log(`[\u0421\u0422\u0410\u0422\u0423\u0421] \u041c\u0435\u0447\u0438: ${swordStr} | \u0415\u0434\u0430: ${foodStr} | \u041c\u043e\u0431\u043e\u0432 \u0440\u044f\u0434\u043e\u043c: ${mobs}`);
+
+  if (mobs === 0) {
+    const nearby = {};
+    for (const entity of Object.values(bot.entities)) {
+      if (!entity || entity === bot.entity || !entity.name || !entity.position) continue;
+      if (bot.entity.position.distanceTo(entity.position) > 32) continue;
+      nearby[entity.name] = (nearby[entity.name] || 0) + 1;
+    }
+    const names = Object.entries(nearby).map(([n, c]) => `${n}:${c}`).join(', ');
+    if (names) log(`[\u0421\u0422\u0410\u0422\u0423\u0421] \u0412\u0441\u0435 \u044d\u043d\u0442\u0438\u0442\u0438 \u0440\u044f\u0434\u043e\u043c: ${names}`);
+  }
 }
 
 function countNearbyHostiles() {
