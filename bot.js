@@ -829,6 +829,7 @@ function openChest(block) {
   return new Promise(async (resolve, reject) => {
     let resolved = false;
     let windowId = null;
+    const collectedSlots = new Map();
 
     function done(err, win) {
       if (resolved) return;
@@ -843,12 +844,23 @@ function openChest(block) {
 
     const timeout = setTimeout(() => {
       if (windowId !== null && bot.currentWindow) {
+        applyCollectedSlots();
         done(null, bot.currentWindow);
         return;
       }
       log(`[\u0421\u0423\u041d\u0414\u0423\u041a] \u0422\u0430\u0439\u043c\u0430\u0443\u0442 \u043e\u0442\u043a\u0440\u044b\u0442\u0438\u044f ${block.name} \u043d\u0430 ${block.position}`);
       done(new Error('timeout 8s'));
     }, 8000);
+
+    function applyCollectedSlots() {
+      const win = bot.currentWindow;
+      if (!win) return;
+      for (const [slot, item] of collectedSlots) {
+        if (slot >= 0 && slot < win.slots.length) {
+          win.slots[slot] = item;
+        }
+      }
+    }
 
     function onOpenRaw(packet) {
       if (resolved) return;
@@ -859,7 +871,10 @@ function openChest(block) {
       if (resolved) return;
       if (packet.windowId === 0) return;
       setTimeout(() => {
-        if (bot.currentWindow) done(null, bot.currentWindow);
+        if (bot.currentWindow) {
+          applyCollectedSlots();
+          done(null, bot.currentWindow);
+        }
       }, 300);
     }
 
@@ -869,11 +884,23 @@ function openChest(block) {
     function onSetSlot(packet) {
       if (resolved) return;
       if (packet.windowId === 0 || packet.windowId === -1) return;
+
+      const item = packet.item;
+      const hasItem = item && item.blockId !== -1 && item.blockId !== 0;
+      if (hasItem) {
+        const Item = bot.registry ? require('prismarine-item')(bot.registry) : null;
+        const parsed = Item ? Item.fromNotch(item) : item;
+        collectedSlots.set(packet.slot, parsed);
+      }
+
       setSlotCount++;
       if (setSlotTimer) clearTimeout(setSlotTimer);
       setSlotTimer = setTimeout(() => {
         if (resolved) return;
-        if (bot.currentWindow) done(null, bot.currentWindow);
+        if (bot.currentWindow) {
+          applyCollectedSlots();
+          done(null, bot.currentWindow);
+        }
       }, 500);
     }
 
@@ -958,25 +985,29 @@ async function takeFoodFromChest() {
 
       await sleep(500);
 
-      const containerSlots = window.slots.filter((s, idx) => s && idx < window.inventoryStart);
-      if (containerSlots.length > 0) {
-        const names = containerSlots.map(i => `${i.name}x${i.count}`).join(', ');
-        log(`[\u0421\u0423\u041d\u0414\u0423\u041a] \u0421\u043e\u0434\u0435\u0440\u0436\u0438\u043c\u043e\u0435: ${names}`);
+      const invStart = window.inventoryStart || 27;
+      const allSlots = [];
+      for (let i = 0; i < invStart; i++) {
+        const item = window.slots[i];
+        if (item) allSlots.push({ slot: i, name: item.name, count: item.count });
+      }
+
+      if (allSlots.length > 0) {
+        const names = allSlots.map(i => `${i.name}x${i.count}`).join(', ');
+        log(`[\u0421\u0423\u041d\u0414\u0423\u041a] \u0421\u043e\u0434\u0435\u0440\u0436\u0438\u043c\u043e\u0435 (${allSlots.length}): ${names}`);
       } else {
-        log('[\u0421\u0423\u041d\u0414\u0423\u041a] \u041f\u0443\u0441\u0442\u043e\u0439');
+        log(`[\u0421\u0423\u041d\u0414\u0423\u041a] \u041f\u0443\u0441\u0442\u043e\u0439 (invStart=${invStart}, totalSlots=${window.slots.length})`);
         bot.closeWindow(window);
         await sleep(300);
         continue;
       }
 
       let tookFood = false;
-      for (let i = 0; i < window.inventoryStart; i++) {
-        const item = window.slots[i];
-        if (!item) continue;
-        if (FOOD_VALUES[item.name]) {
-          log(`[\u0421\u0423\u041d\u0414\u0423\u041a] \u0411\u0435\u0440\u0443 ${ru(item.name)} x${item.count} (\u0441\u043b\u043e\u0442 ${i})`);
+      for (const entry of allSlots) {
+        if (FOOD_VALUES[entry.name]) {
+          log(`[\u0421\u0423\u041d\u0414\u0423\u041a] \u0411\u0435\u0440\u0443 ${ru(entry.name)} x${entry.count} (\u0441\u043b\u043e\u0442 ${entry.slot})`);
           try {
-            await bot.clickWindow(i, 0, 1);
+            await bot.clickWindow(entry.slot, 0, 1);
             await sleep(200);
             tookFood = true;
           } catch (e) {
