@@ -30,7 +30,7 @@ const HOSTILE_MOBS = new Set([
   'zombie_pigman'
 ]);
 
-const SWORD_TIERS = ['netherite_sword', 'diamond_sword', 'iron_sword', 'stone_sword', 'golden_sword', 'wooden_sword'];
+const SWORD_TIERS = ['netherite_sword', 'diamond_sword'];
 const ATTACK_RANGE = 4;
 const ATTACK_COOLDOWN_MS = 600;
 
@@ -375,6 +375,7 @@ function startReconnectCheck() {
   });
 
   let checkDone = false;
+  let connectFailed = false;
 
   bot.on('login', () => {
     log('[\u041f\u0420\u041e\u0412\u0415\u0420\u041a\u0410] \u0412\u043e\u0448\u043b\u0438, \u043e\u0442\u043f\u0440\u0430\u0432\u043b\u044f\u0435\u043c /anarchy...');
@@ -395,16 +396,31 @@ function startReconnectCheck() {
   });
 
   bot.on('end', () => {
-    if (!checkDone) {
+    if (!checkDone && !connectFailed) {
       log('[\u041f\u0420\u041e\u0412\u0415\u0420\u041a\u0410] \u041d\u0435\u043e\u0436\u0438\u0434\u0430\u043d\u043d\u043e\u0435 \u043e\u0442\u043a\u043b\u044e\u0447\u0435\u043d\u0438\u0435');
-      bot = null;
-      reconnecting = false;
+      retryReconnect();
     }
   });
 
   bot.on('error', (err) => {
     log(`[\u041f\u0420\u041e\u0412\u0415\u0420\u041a\u0410] \u041e\u0448\u0438\u0431\u043a\u0430: ${err.message}`);
+    if (err.code === 'ETIMEDOUT' || err.code === 'ECONNREFUSED' || err.code === 'ECONNRESET') {
+      connectFailed = true;
+      bot = null;
+      retryReconnect();
+    }
   });
+
+  function retryReconnect() {
+    if (!reconnecting) return;
+    bot = null;
+    log('[\u041f\u0420\u041e\u0412\u0415\u0420\u041a\u0410] \u041f\u043e\u0432\u0442\u043e\u0440 \u0447\u0435\u0440\u0435\u0437 30\u0441...');
+    setTimeout(() => {
+      if (!reconnecting) return;
+      log('[\u041f\u0420\u041e\u0412\u0415\u0420\u041a\u0410] \u041f\u043e\u0432\u0442\u043e\u0440\u043d\u044b\u0439 \u0440\u0435\u043a\u043e\u043d\u043d\u0435\u043a\u0442...');
+      startReconnectCheck();
+    }, 30000);
+  }
 
   function recheckEnemies() {
     if (!bot || checkDone) return;
@@ -536,7 +552,7 @@ async function farmTick() {
 async function ensureSwordEquipped() {
   if (!bot || !bot.inventory) return;
   const held = bot.heldItem;
-  if (held && held.name.includes('sword')) return;
+  if (held && SWORD_TIERS.includes(held.name)) return;
 
   const sword = findBestSword();
   if (!sword) return;
@@ -552,8 +568,7 @@ function findBestSword() {
     const sword = bot.inventory.items().find(item => item.name === tier);
     if (sword) return sword;
   }
-  const anySword = bot.inventory.items().find(item => item.name.includes('sword'));
-  return anySword || null;
+  return null;
 }
 
 function logInventoryStatus() {
