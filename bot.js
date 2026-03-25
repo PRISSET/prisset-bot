@@ -1,13 +1,7 @@
 import mineflayer from 'mineflayer';
-import pathfinderPkg from 'mineflayer-pathfinder';
-import pvpPkg from 'mineflayer-pvp';
-import mcDataLoader from 'minecraft-data';
 import { createInterface } from 'readline';
 import https from 'https';
 import * as settings from './settings.js';
-
-const { pathfinder, Movements } = pathfinderPkg;
-const pvpPlugin = pvpPkg.plugin;
 
 const cfg = settings.load();
 let bot = null;
@@ -16,10 +10,14 @@ let farmActive = false;
 let guardScanTimer = null;
 let farmLoopTimer = null;
 let autoEatTimer = null;
+let lastAttackTime = 0;
 let navigationDone = false;
 let spawnHandled = false;
 let reconnecting = false;
 let lastEnemyName = null;
+let reconnectAttempt = 0;
+
+const RECONNECT_DELAYS = [2 * 60 * 1000, 10 * 60 * 1000, 30 * 60 * 1000];
 
 const HOSTILE_MOBS = new Set([
   'zombie', 'skeleton', 'spider', 'cave_spider', 'creeper',
@@ -33,6 +31,8 @@ const HOSTILE_MOBS = new Set([
 ]);
 
 const SWORD_TIERS = ['netherite_sword', 'diamond_sword', 'iron_sword', 'stone_sword', 'golden_sword', 'wooden_sword'];
+const ATTACK_RANGE = 4;
+const ATTACK_COOLDOWN_MS = 600;
 
 const MOB_NAMES_RU = {
   'zombie': '\u0437\u043e\u043c\u0431\u0438', 'skeleton': '\u0441\u043a\u0435\u043b\u0435\u0442',
@@ -122,6 +122,8 @@ function startBot() {
   farmActive = false;
   spawnHandled = false;
   reconnecting = false;
+  reconnectAttempt = 0;
+  lastHealth = 20;
 
   log(`\u041f\u043e\u0434\u043a\u043b\u044e\u0447\u0435\u043d\u0438\u0435 \u043a\u0430\u043a "${cfg.botNick}" \u043a ${cfg.serverHost}:${cfg.serverPort}...`);
 
@@ -133,9 +135,6 @@ function startBot() {
     auth: 'offline',
     hideErrors: false
   });
-
-  bot.loadPlugin(pathfinder);
-  bot.loadPlugin(pvpPlugin);
 
   bot.on('login', () => {
     log('\u0412\u043e\u0448\u043b\u0438 \u043d\u0430 \u0441\u0435\u0440\u0432\u0435\u0440!');
@@ -156,6 +155,7 @@ function startBot() {
 
   bot.on('health', () => {
     tryAutoEat();
+    checkPlayerDamage();
   });
 
   bot.on('end', (reason) => {
@@ -265,12 +265,6 @@ function onNavigationDone() {
   farmActive = true;
   log('\u0424\u0410\u0420\u041c \u0410\u041a\u0422\u0418\u0412\u0415\u041d. \u041e\u0445\u043e\u0442\u0430 \u043d\u0430 \u043c\u043e\u0431\u043e\u0432 + \u043e\u0445\u0440\u0430\u043d\u0430...');
 
-  const mcData = mcDataLoader(bot.version);
-  const defaultMove = new Movements(bot, mcData);
-  defaultMove.canDig = false;
-  defaultMove.allow1by1towers = false;
-  bot.pathfinder.setMovements(defaultMove);
-
   startGuardScan();
   startFarmLoop();
   startAutoEat();
@@ -337,24 +331,36 @@ async function handleEnemyDetected(username, entityPos) {
     botPos = `X: ${Math.floor(pos.x)}, Y: ${Math.floor(pos.y)}, Z: ${Math.floor(pos.z)}`;
   }
 
-  const tgText = `[PRISSET BOT] \u0412\u0430\u0441 \u0440\u0435\u0439\u0434\u044f\u0442!\n\u0420\u0435\u0439\u0434\u0435\u0440: ${username}\n\u041a\u043e\u043e\u0440\u0434\u0438\u043d\u0430\u0442\u044b \u0440\u0435\u0439\u0434\u0435\u0440\u0430: ${enemyPos}\n\u041a\u043e\u043e\u0440\u0434\u0438\u043d\u0430\u0442\u044b \u0431\u043e\u0442\u0430: ${botPos}\n\u0411\u043e\u0442: ${selfName}`;
+  const attempt = reconnectAttempt + 1;
+  const tgText = `[PRISSET BOT] \u0412\u0430\u0441 \u0440\u0435\u0439\u0434\u044f\u0442!\n\u0420\u0435\u0439\u0434\u0435\u0440: ${username}\n\u041a\u043e\u043e\u0440\u0434\u0438\u043d\u0430\u0442\u044b \u0440\u0435\u0439\u0434\u0435\u0440\u0430: ${enemyPos}\n\u041a\u043e\u043e\u0440\u0434\u0438\u043d\u0430\u0442\u044b \u0431\u043e\u0442\u0430: ${botPos}\n\u0411\u043e\u0442: ${selfName}\n\u041f\u043e\u043f\u044b\u0442\u043a\u0430: ${attempt}/3`;
   sendTelegram(tgText);
 
-  log(`\u0412\u0420\u0410\u0413: ${username} \u043d\u0430 ${enemyPos}. \u041e\u0442\u043a\u043b\u044e\u0447\u0430\u0435\u043c\u0441\u044f...`);
+  log(`\u0412\u0420\u0410\u0413: ${username} \u043d\u0430 ${enemyPos}. \u041e\u0442\u043a\u043b\u044e\u0447\u0430\u0435\u043c\u0441\u044f... (\u043f\u043e\u043f\u044b\u0442\u043a\u0430 ${attempt}/3)`);
   lastEnemyName = username;
 
   if (bot) {
-    try { bot.pvp.stop(); } catch {}
     bot.quit('Raid detected');
   }
 
-  log('\u0416\u0434\u0451\u043c 2 \u043c\u0438\u043d\u0443\u0442\u044b \u043f\u0435\u0440\u0435\u0434 \u0440\u0435\u043a\u043e\u043d\u043d\u0435\u043a\u0442\u043e\u043c...');
+  if (reconnectAttempt >= RECONNECT_DELAYS.length) {
+    log('\u0412\u0441\u0435 \u043f\u043e\u043f\u044b\u0442\u043a\u0438 \u0438\u0441\u0447\u0435\u0440\u043f\u0430\u043d\u044b. \u0417\u0410\u0412\u0415\u0420\u0428\u0415\u041d\u0418\u0415.');
+    sendTelegram(`[PRISSET BOT] \u0412\u0441\u0435 3 \u043f\u043e\u043f\u044b\u0442\u043a\u0438 \u0440\u0435\u043a\u043e\u043d\u043d\u0435\u043a\u0442\u0430 \u0438\u0441\u0447\u0435\u0440\u043f\u0430\u043d\u044b. \u0412\u0440\u0430\u0433 \u043d\u0435 \u0443\u0445\u043e\u0434\u0438\u0442. \u0411\u043e\u0442 \u0432\u044b\u043a\u043b\u044e\u0447\u0435\u043d.`);
+    bot = null;
+    reconnecting = false;
+    log('\u0411\u043e\u0442 \u043e\u0441\u0442\u0430\u043d\u043e\u0432\u043b\u0435\u043d. /start \u0434\u043b\u044f \u043f\u0435\u0440\u0435\u0437\u0430\u043f\u0443\u0441\u043a\u0430.');
+    return;
+  }
+
+  const delay = RECONNECT_DELAYS[reconnectAttempt];
+  const delayMin = Math.floor(delay / 60000);
+  log(`\u0416\u0434\u0451\u043c ${delayMin} \u043c\u0438\u043d\u0443\u0442 \u043f\u0435\u0440\u0435\u0434 \u0440\u0435\u043a\u043e\u043d\u043d\u0435\u043a\u0442\u043e\u043c...`);
   reconnecting = true;
-  await sleep(120000);
+  reconnectAttempt++;
+  await sleep(delay);
 
   if (!reconnecting) return;
 
-  log('\u0420\u0435\u043a\u043e\u043d\u043d\u0435\u043a\u0442 \u0434\u043b\u044f \u043f\u0440\u043e\u0432\u0435\u0440\u043a\u0438...');
+  log(`\u0420\u0435\u043a\u043e\u043d\u043d\u0435\u043a\u0442 \u0434\u043b\u044f \u043f\u0440\u043e\u0432\u0435\u0440\u043a\u0438 (\u043f\u043e\u043f\u044b\u0442\u043a\u0430 ${reconnectAttempt}/3)...`);
   startReconnectCheck();
 }
 
@@ -367,9 +373,6 @@ function startReconnectCheck() {
     auth: 'offline',
     hideErrors: false
   });
-
-  bot.loadPlugin(pathfinder);
-  bot.loadPlugin(pvpPlugin);
 
   let checkDone = false;
 
@@ -407,7 +410,8 @@ function startReconnectCheck() {
     if (!bot || checkDone) return;
     checkDone = true;
 
-    let enemyStillHere = false;
+    let enemyName = null;
+    let enemyEntity = null;
     for (const name of Object.keys(bot.players)) {
       if (name === cfg.botNick) continue;
       if (settings.shouldIgnore(name)) continue;
@@ -415,41 +419,47 @@ function startReconnectCheck() {
       if (!pd || !pd.entity) continue;
       const dist = bot.entity ? bot.entity.position.distanceTo(pd.entity.position) : 999;
       if (dist <= 200) {
-        enemyStillHere = true;
+        enemyName = name;
+        enemyEntity = pd.entity;
         log(`[\u041f\u0420\u041e\u0412\u0415\u0420\u041a\u0410] \u0412\u0440\u0430\u0433 "${name}" \u0432\u0441\u0451 \u0435\u0449\u0451 \u0442\u0443\u0442, \u0434\u0438\u0441\u0442\u0430\u043d\u0446\u0438\u044f ${Math.floor(dist)}`);
         break;
       }
     }
 
-    if (enemyStillHere) {
-      log('[\u041f\u0420\u041e\u0412\u0415\u0420\u041a\u0410] \u0412\u0440\u0430\u0433 \u043d\u0430 \u0431\u0430\u0437\u0435. \u0412\u044b\u043a\u043b\u044e\u0447\u0430\u0435\u043c\u0441\u044f.');
-      sendTelegram(`[PRISSET BOT] \u0412\u0440\u0430\u0433 \u0432\u0441\u0435 \u0435\u0449\u0435 \u043d\u0430 \u0431\u0430\u0437\u0435. \u0411\u043e\u0442 \u043e\u0444\u0444.`);
+    if (enemyName) {
       if (bot) bot.quit('Enemy still here');
       bot = null;
-      reconnecting = false;
-      log('\u0411\u043e\u0442 \u043e\u0441\u0442\u0430\u043d\u043e\u0432\u043b\u0435\u043d. /start \u0434\u043b\u044f \u043f\u0435\u0440\u0435\u043f\u043e\u0434\u043a\u043b\u044e\u0447\u0435\u043d\u0438\u044f.');
+
+      if (lastEnemyName && enemyName.toLowerCase() === lastEnemyName.toLowerCase()) {
+        log(`[\u041f\u0420\u041e\u0412\u0415\u0420\u041a\u0410] \u0422\u043e\u0442 \u0436\u0435 \u0440\u0435\u0439\u0434\u0435\u0440 "${enemyName}" \u043d\u0435 \u0443\u0448\u0451\u043b. \u0417\u0410\u0412\u0415\u0420\u0428\u0415\u041d\u0418\u0415!`);
+        sendTelegram(`[PRISSET BOT] \u0420\u0435\u0439\u0434\u0435\u0440 "${enemyName}" \u043d\u0435 \u0443\u0445\u043e\u0434\u0438\u0442. \u0411\u043e\u0442 \u0432\u044b\u043a\u043b\u044e\u0447\u0435\u043d.`);
+        reconnecting = false;
+        log('\u0411\u043e\u0442 \u043e\u0441\u0442\u0430\u043d\u043e\u0432\u043b\u0435\u043d. /start \u0434\u043b\u044f \u043f\u0435\u0440\u0435\u0437\u0430\u043f\u0443\u0441\u043a\u0430.');
+      } else {
+        log(`[\u041f\u0420\u041e\u0412\u0415\u0420\u041a\u0410] \u041d\u043e\u0432\u044b\u0439 \u0432\u0440\u0430\u0433 "${enemyName}". \u042d\u0441\u043a\u0430\u043b\u0430\u0446\u0438\u044f...`);
+        handleEnemyDetected(enemyName, enemyEntity.position);
+      }
     } else {
       log('[\u041f\u0420\u041e\u0412\u0415\u0420\u041a\u0410] \u0427\u0438\u0441\u0442\u043e! \u0412\u043e\u0437\u043e\u0431\u043d\u043e\u0432\u043b\u044f\u0435\u043c \u0444\u0430\u0440\u043c...');
       sendTelegram(`[PRISSET BOT] \u0411\u0430\u0437\u0430 \u0447\u0438\u0441\u0442\u0430. \u0424\u0430\u0440\u043c \u0432\u043e\u0437\u043e\u0431\u043d\u043e\u0432\u043b\u0435\u043d.`);
       reconnecting = false;
+      reconnectAttempt = 0;
       lastEnemyName = null;
+      lastHealth = 20;
 
       navigationDone = true;
       guardActive = true;
       farmActive = true;
-
-      const mcData = mcDataLoader(bot.version);
-      const defaultMove = new Movements(bot, mcData);
-      defaultMove.canDig = false;
-      defaultMove.allow1by1towers = false;
-      bot.pathfinder.setMovements(defaultMove);
 
       startGuardScan();
       startFarmLoop();
       startAutoEat();
       equipBestSword();
 
-      bot.on('health', () => tryAutoEat());
+      bot.on('health', () => {
+        tryAutoEat();
+        checkPlayerDamage();
+      });
       bot.on('end', (reason) => {
         log(`\u041e\u0442\u043a\u043b\u044e\u0447\u0435\u043d\u043e: ${reason}`);
         cleanup();
@@ -482,10 +492,10 @@ function startFarmLoop() {
   farmLoopTimer = setInterval(() => {
     if (!bot || !farmActive || !bot.entity) return;
     statusLogCounter++;
-    if (statusLogCounter % 30 === 0) logInventoryStatus();
+    if (statusLogCounter % 60 === 0) logInventoryStatus();
     farmTick();
-  }, 1000);
-  log('\u0424\u0430\u0440\u043c: \u043f\u043e\u0438\u0441\u043a \u043c\u043e\u0431\u043e\u0432 \u043a\u0430\u0436\u0434\u0443\u044e 1\u0441');
+  }, 500);
+  log('\u0424\u0430\u0440\u043c: \u043f\u043e\u0438\u0441\u043a \u043c\u043e\u0431\u043e\u0432 \u043a\u0430\u0436\u0434\u044b\u0435 0.5\u0441');
   logInventoryStatus();
 }
 
@@ -494,15 +504,14 @@ function stopFarmLoop() {
     clearInterval(farmLoopTimer);
     farmLoopTimer = null;
   }
-  if (bot) {
-    try { bot.pvp.stop(); } catch {}
-  }
 }
 
 async function farmTick() {
-  if (bot.pvp.target) return;
   if (isAtSpawn()) return;
   if (isEating) return;
+
+  const now = Date.now();
+  if (now - lastAttackTime < ATTACK_COOLDOWN_MS) return;
 
   await ensureSwordEquipped();
 
@@ -510,10 +519,18 @@ async function farmTick() {
   if (!mob) return;
 
   const dist = bot.entity.position.distanceTo(mob.position);
-  const allMobs = countNearbyHostiles();
-  log(`[\u0424\u0410\u0420\u041c] \u0410\u0442\u0430\u043a\u0443\u0435\u043c ${ru(mob.name)} (\u0434\u0438\u0441\u0442: ${Math.floor(dist)}, \u043c\u043e\u0431\u043e\u0432 \u0440\u044f\u0434\u043e\u043c: ${allMobs})`);
+  if (dist > ATTACK_RANGE) return;
 
-  bot.pvp.attack(mob);
+  const allMobs = countNearbyHostiles();
+  log(`[\u0424\u0410\u0420\u041c] \u0410\u0442\u0430\u043a\u0443\u0435\u043c ${ru(mob.name)} (\u0434\u0438\u0441\u0442: ${dist.toFixed(1)}, \u043c\u043e\u0431\u043e\u0432 \u0440\u044f\u0434\u043e\u043c: ${allMobs})`);
+
+  try {
+    await bot.lookAt(mob.position.offset(0, mob.height * 0.85, 0));
+    bot.attack(mob);
+    lastAttackTime = now;
+  } catch (e) {
+    log(`[\u0424\u0410\u0420\u041c] \u041e\u0448\u0438\u0431\u043a\u0430 \u0430\u0442\u0430\u043a\u0438: ${e.message}`);
+  }
 }
 
 async function ensureSwordEquipped() {
@@ -632,6 +649,48 @@ function stopAutoEat() {
 }
 
 let isEating = false;
+let lastHealth = 20;
+
+function checkPlayerDamage() {
+  if (!bot || !bot.entity || !guardActive) return;
+  if (isAtSpawn()) return;
+
+  const hp = bot.health;
+  if (hp >= lastHealth) {
+    lastHealth = hp;
+    return;
+  }
+
+  const dmg = lastHealth - hp;
+  lastHealth = hp;
+
+  for (const name of Object.keys(bot.players)) {
+    if (name === cfg.botNick) continue;
+    if (settings.shouldIgnore(name)) continue;
+    const pd = bot.players[name];
+    if (!pd || !pd.entity) continue;
+    const dist = bot.entity.position.distanceTo(pd.entity.position);
+    if (dist <= 8) {
+      log(`[\u0423\u0420\u041e\u041d] \u041f\u043e\u043b\u0443\u0447\u0435\u043d \u0443\u0440\u043e\u043d ${dmg.toFixed(1)} HP! \u0412\u0440\u0430\u0433 "${name}" \u0440\u044f\u0434\u043e\u043c (${dist.toFixed(0)} \u0431\u043b). \u0417\u0410\u0412\u0415\u0420\u0428\u0415\u041d\u0418\u0415!`);
+
+      let botPos = 'unknown';
+      if (bot.entity) {
+        const pos = bot.entity.position;
+        botPos = `X: ${Math.floor(pos.x)}, Y: ${Math.floor(pos.y)}, Z: ${Math.floor(pos.z)}`;
+      }
+      const enemyPos = `X: ${Math.floor(pd.entity.position.x)}, Y: ${Math.floor(pd.entity.position.y)}, Z: ${Math.floor(pd.entity.position.z)}`;
+
+      sendTelegram(`[PRISSET BOT] \u0411\u043e\u0442 \u043f\u043e\u043b\u0443\u0447\u0438\u043b \u0443\u0440\u043e\u043d \u043e\u0442 \u0438\u0433\u0440\u043e\u043a\u0430!\n\u0410\u0442\u0430\u043a\u0443\u044e\u0449\u0438\u0439: ${name}\n\u0423\u0440\u043e\u043d: ${dmg.toFixed(1)} HP\n\u041a\u043e\u043e\u0440\u0434\u0438\u043d\u0430\u0442\u044b \u0431\u043e\u0442\u0430: ${botPos}\n\u041a\u043e\u043e\u0440\u0434\u0438\u043d\u0430\u0442\u044b \u0432\u0440\u0430\u0433\u0430: ${enemyPos}\n\u0411\u043e\u0442 \u0432\u044b\u043a\u043b\u044e\u0447\u0435\u043d!`);
+
+      if (bot) bot.quit('Player damage detected');
+      cleanup();
+      bot = null;
+      reconnecting = false;
+      log('\u0411\u043e\u0442 \u043f\u043e\u043b\u043d\u043e\u0441\u0442\u044c\u044e \u043e\u0441\u0442\u0430\u043d\u043e\u0432\u043b\u0435\u043d. /start \u0434\u043b\u044f \u043f\u0435\u0440\u0435\u0437\u0430\u043f\u0443\u0441\u043a\u0430.');
+      return;
+    }
+  }
+}
 
 async function tryAutoEat() {
   if (!bot || !bot.entity) return;
@@ -645,10 +704,6 @@ async function tryAutoEat() {
   }
 
   isEating = true;
-  const wasFighting = bot.pvp && bot.pvp.target;
-  if (wasFighting) {
-    try { bot.pvp.stop(); } catch {}
-  }
 
   try {
     log(`[\u0415\u0414\u0410] \u0415\u043c ${ru(foodItem.name)} x${foodItem.count} (\u0433\u043e\u043b\u043e\u0434: ${bot.food})...`);
@@ -805,9 +860,6 @@ function handleCommand(line) {
           log(`\u041f\u043e\u0437\u0438\u0446\u0438\u044f: X:${Math.floor(pos.x)} Y:${Math.floor(pos.y)} Z:${Math.floor(pos.z)}`);
         }
         log(`\u0425\u041f: ${bot.health || '?'} | \u0413\u043e\u043b\u043e\u0434: ${bot.food || '?'}`);
-        if (bot.pvp && bot.pvp.target) {
-          log(`\u0411\u044c\u0451\u0442: ${ru(bot.pvp.target.name) || bot.pvp.target.displayName}`);
-        }
         if (bot.inventory) {
           const mainHand = bot.heldItem;
           const offHand = bot.inventory.slots[45];
