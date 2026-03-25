@@ -1031,7 +1031,10 @@ async function manageInventory() {
     }
   }
 
-  if (storeItems.length > 0) {
+  const needFood = !bot.inventory.items().some(i => FOOD_VALUES[i.name]);
+  const needChest = storeItems.length > 0 || needFood;
+
+  if (needChest) {
     const chests = findNearbyChests();
     if (chests.length > 0) {
       for (const chest of chests) {
@@ -1052,17 +1055,37 @@ async function manageInventory() {
 
           await sleep(500);
 
-          for (let i = window.inventoryStart; i < window.inventoryEnd; i++) {
-            const item = window.slots[i];
-            if (!item) continue;
-            if (!STORE_IN_CHEST.has(item.name)) continue;
-            if (PROTECTED_ITEMS.has(item.name)) continue;
-            log(`[\u0421\u0423\u041d\u0414\u0423\u041a] \u041a\u043b\u0430\u0434\u0443 ${ru(item.name)} x${item.count} (\u0441\u043b\u043e\u0442 ${i})`);
-            try {
-              await bot.clickWindow(i, 0, 1);
-              await sleep(200);
-            } catch (e) {
-              log(`[\u0421\u0423\u041d\u0414\u0423\u041a] \u041e\u0448\u0438\u0431\u043a\u0430 \u0441\u043a\u043b\u0430\u0434\u0438\u0440\u043e\u0432\u0430\u043d\u0438\u044f: ${e.message}`);
+          const invStart = window.inventoryStart || 27;
+
+          if (storeItems.length > 0) {
+            for (let i = invStart; i < window.inventoryEnd; i++) {
+              const item = window.slots[i];
+              if (!item) continue;
+              if (!STORE_IN_CHEST.has(item.name)) continue;
+              if (PROTECTED_ITEMS.has(item.name)) continue;
+              log(`[\u0421\u0423\u041d\u0414\u0423\u041a] \u041a\u043b\u0430\u0434\u0443 ${ru(item.name)} x${item.count} (\u0441\u043b\u043e\u0442 ${i})`);
+              try {
+                await bot.clickWindow(i, 0, 1);
+                await sleep(200);
+              } catch (e) {
+                log(`[\u0421\u0423\u041d\u0414\u0423\u041a] \u041e\u0448\u0438\u0431\u043a\u0430 \u0441\u043a\u043b\u0430\u0434\u0438\u0440\u043e\u0432\u0430\u043d\u0438\u044f: ${e.message}`);
+              }
+            }
+          }
+
+          if (needFood) {
+            for (let i = 0; i < invStart; i++) {
+              const item = window.slots[i];
+              if (!item) continue;
+              if (FOOD_VALUES[item.name]) {
+                log(`[\u0421\u0423\u041d\u0414\u0423\u041a] \u0411\u0435\u0440\u0443 ${ru(item.name)} x${item.count} (\u0441\u043b\u043e\u0442 ${i})`);
+                try {
+                  await bot.clickWindow(i, 0, 1);
+                  await sleep(200);
+                } catch (e) {
+                  log(`[\u0421\u0423\u041d\u0414\u0423\u041a] \u041e\u0448\u0438\u0431\u043a\u0430 \u0432\u0437\u044f\u0442\u0438\u044f: ${e.message}`);
+                }
+              }
             }
           }
 
@@ -1073,8 +1096,6 @@ async function manageInventory() {
           log(`[\u0421\u0423\u041d\u0414\u0423\u041a] \u041e\u0448\u0438\u0431\u043a\u0430 \u043e\u0442\u043a\u0440\u044b\u0442\u0438\u044f: ${e.message}`);
         }
       }
-    } else {
-      log('[\u0421\u0423\u041d\u0414\u0423\u041a] \u041d\u0435\u0442 \u0441\u0443\u043d\u0434\u0443\u043a\u043e\u0432 \u0434\u043b\u044f \u0441\u043a\u043b\u0430\u0434\u0438\u0440\u043e\u0432\u0430\u043d\u0438\u044f \u0437\u043e\u043b\u043e\u0442\u0430');
     }
   }
 
