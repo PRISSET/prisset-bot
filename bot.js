@@ -970,11 +970,13 @@ async function takeFoodFromChest() {
       }
 
       let tookFood = false;
-      for (const item of containerSlots) {
+      for (let i = 0; i < window.inventoryStart; i++) {
+        const item = window.slots[i];
+        if (!item) continue;
         if (FOOD_VALUES[item.name]) {
-          log(`[\u0421\u0423\u041d\u0414\u0423\u041a] \u0411\u0435\u0440\u0443 ${ru(item.name)} x${item.count} \u0438\u0437 \u0441\u043b\u043e\u0442\u0430 ${item.slot}`);
+          log(`[\u0421\u0423\u041d\u0414\u0423\u041a] \u0411\u0435\u0440\u0443 ${ru(item.name)} x${item.count} (\u0441\u043b\u043e\u0442 ${i})`);
           try {
-            await bot.clickWindow(item.slot, 0, 0);
+            await bot.clickWindow(i, 0, 1);
             await sleep(200);
             tookFood = true;
           } catch (e) {
@@ -1046,12 +1048,14 @@ async function manageInventory() {
 
           await sleep(500);
 
-          const currentStore = bot.inventory.items().filter(i => STORE_IN_CHEST.has(i.name));
-          for (const item of currentStore) {
+          for (let i = window.inventoryStart; i < window.inventoryEnd; i++) {
+            const item = window.slots[i];
+            if (!item) continue;
+            if (!STORE_IN_CHEST.has(item.name)) continue;
             if (PROTECTED_ITEMS.has(item.name)) continue;
-            log(`[\u0421\u0423\u041d\u0414\u0423\u041a] \u041a\u043b\u0430\u0434\u0443 ${ru(item.name)} x${item.count}`);
+            log(`[\u0421\u0423\u041d\u0414\u0423\u041a] \u041a\u043b\u0430\u0434\u0443 ${ru(item.name)} x${item.count} (\u0441\u043b\u043e\u0442 ${i})`);
             try {
-              await bot.clickWindow(item.slot, 0, 0);
+              await bot.clickWindow(i, 0, 1);
               await sleep(200);
             } catch (e) {
               log(`[\u0421\u0423\u041d\u0414\u0423\u041a] \u041e\u0448\u0438\u0431\u043a\u0430 \u0441\u043a\u043b\u0430\u0434\u0438\u0440\u043e\u0432\u0430\u043d\u0438\u044f: ${e.message}`);
