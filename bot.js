@@ -51,6 +51,8 @@ const PROTECTED_ITEMS = new Set([
 let isManagingInventory = false;
 let lastInventoryManageTime = 0;
 const INVENTORY_MANAGE_COOLDOWN = 30000;
+let lastChestFoodSearchTime = 0;
+const CHEST_FOOD_SEARCH_COOLDOWN = 60000;
 
 const MOB_NAMES_RU = {
   'zombie': '\u0437\u043e\u043c\u0431\u0438', 'skeleton': '\u0441\u043a\u0435\u043b\u0435\u0442',
@@ -528,7 +530,7 @@ function startFarmLoop() {
     statusLogCounter++;
     if (statusLogCounter % 60 === 0) {
       logInventoryStatus();
-      manageInventory();
+      manageInventory().catch(e => log(`[\u0418\u041d\u0412\u0415\u041d\u0422\u0410\u0420\u042c] \u041e\u0448\u0438\u0431\u043a\u0430: ${e.message}`));
     }
     farmTick();
   }, 500);
@@ -674,7 +676,7 @@ function startAutoEat() {
   stopAutoEat();
   autoEatTimer = setInterval(() => {
     if (!bot || !bot.entity) return;
-    tryAutoEat();
+    tryAutoEat().catch(e => log(`[\u0415\u0414\u0410] \u041e\u0448\u0438\u0431\u043a\u0430: ${e.message}`));
   }, 3000);
 }
 
@@ -734,10 +736,33 @@ async function tryAutoEat() {
   if (!bot || !bot.entity) return;
   if (bot.food >= 14) return;
   if (isEating) return;
+  if (isManagingInventory) return;
+
+  const offhand = bot.inventory.slots[45];
+  if (offhand && FOOD_VALUES[offhand.name]) {
+    isEating = true;
+    try {
+      log(`[\u0415\u0414\u0410] \u0415\u043c ${ru(offhand.name)} \u0438\u0437 \u043b\u0435\u0432\u043e\u0439 \u0440\u0443\u043a\u0438 (\u0433\u043e\u043b\u043e\u0434: ${bot.food})...`);
+      bot.activateItem(true);
+      await sleep(1800);
+      bot.deactivateItem();
+      log(`[\u0415\u0414\u0410] \u0413\u043e\u0442\u043e\u0432\u043e. \u0413\u043e\u043b\u043e\u0434: ${bot.food}`);
+    } catch (e) {
+      log(`[\u0415\u0414\u0410] \u041f\u0440\u0435\u0440\u0432\u0430\u043d\u043e: ${e.message}`);
+    }
+    isEating = false;
+    return;
+  }
 
   let foodItem = findBestFood();
   if (!foodItem) {
-    log(`[\u0415\u0414\u0410] \u041d\u0435\u0442 \u0435\u0434\u044b \u0432 \u0438\u043d\u0432\u0435\u043d\u0442\u0430\u0440\u0435, \u0438\u0449\u0443 \u0432 \u0441\u0443\u043d\u0434\u0443\u043a\u0430\u0445...`);
+    const now = Date.now();
+    if (now - lastChestFoodSearchTime < CHEST_FOOD_SEARCH_COOLDOWN) {
+      log(`[\u0415\u0414\u0410] \u041d\u0435\u0442 \u0435\u0434\u044b! \u0413\u043e\u043b\u043e\u0434: ${bot.food}`);
+      return;
+    }
+    lastChestFoodSearchTime = now;
+    log(`[\u0415\u0414\u0410] \u041d\u0435\u0442 \u0435\u0434\u044b \u0432 \u0438\u043d\u0432\u0435\u043d\u0442\u0430\u0440\u0435, \u0438\u0449\u0443 \u0432 \u0441\u0443\u043d\u0434\u0443\u043a\u0430\u0445...');
     const found = await takeFoodFromChest();
     if (found) {
       foodItem = findBestFood();
@@ -841,8 +866,16 @@ async function takeFoodFromChest() {
 
       await sleep(300);
 
+      const containerSlots = container.containerItems();
+      if (containerSlots.length > 0) {
+        const names = containerSlots.map(i => `${i.name}x${i.count}`).join(', ');
+        log(`[\u0421\u0423\u041d\u0414\u0423\u041a] \u0421\u043e\u0434\u0435\u0440\u0436\u0438\u043c\u043e\u0435: ${names}`);
+      } else {
+        log('[\u0421\u0423\u041d\u0414\u0423\u041a] \u041f\u0443\u0441\u0442\u043e\u0439');
+      }
+
       let tookFood = false;
-      for (const item of container.containerItems()) {
+      for (const item of containerSlots) {
         if (FOOD_VALUES[item.name]) {
           log(`[\u0421\u0423\u041d\u0414\u0423\u041a] \u0411\u0435\u0440\u0443 ${ru(item.name)} x${item.count}`);
           try {
