@@ -499,9 +499,12 @@ function stopFarmLoop() {
   }
 }
 
-function farmTick() {
+async function farmTick() {
   if (bot.pvp.target) return;
   if (isAtSpawn()) return;
+  if (isEating) return;
+
+  await ensureSwordEquipped();
 
   const mob = findNearestHostile();
   if (!mob) return;
@@ -511,6 +514,29 @@ function farmTick() {
   log(`[\u0424\u0410\u0420\u041c] \u0410\u0442\u0430\u043a\u0443\u0435\u043c ${ru(mob.name)} (\u0434\u0438\u0441\u0442: ${Math.floor(dist)}, \u043c\u043e\u0431\u043e\u0432 \u0440\u044f\u0434\u043e\u043c: ${allMobs})`);
 
   bot.pvp.attack(mob);
+}
+
+async function ensureSwordEquipped() {
+  if (!bot || !bot.inventory) return;
+  const held = bot.heldItem;
+  if (held && held.name.includes('sword')) return;
+
+  const sword = findBestSword();
+  if (!sword) return;
+
+  try {
+    await bot.equip(sword, 'hand');
+    log(`[\u042d\u041a\u0418\u041f] ${ru(sword.name)}`);
+  } catch {}
+}
+
+function findBestSword() {
+  for (const tier of SWORD_TIERS) {
+    const sword = bot.inventory.items().find(item => item.name === tier);
+    if (sword) return sword;
+  }
+  const anySword = bot.inventory.items().find(item => item.name.includes('sword'));
+  return anySword || null;
 }
 
 function logInventoryStatus() {
@@ -526,7 +552,7 @@ function logInventoryStatus() {
     ? foods.map(f => `${ru(f.name)} x${f.count}`).join(', ')
     : '\u043d\u0435\u0442';
 
-  const swords = bot.inventory.items().filter(i => SWORD_TIERS.includes(i.name));
+  const swords = bot.inventory.items().filter(i => i.name.includes('sword'));
   const swordStr = swords.length
     ? swords.map(s => ru(s.name)).join(', ')
     : '\u043d\u0435\u0442';
@@ -605,10 +631,12 @@ function stopAutoEat() {
   }
 }
 
+let isEating = false;
+
 async function tryAutoEat() {
   if (!bot || !bot.entity) return;
-  if (bot.food >= 20) return;
-  if (bot.pvp && bot.pvp.target) return;
+  if (bot.food >= 18) return;
+  if (isEating) return;
 
   const foodItem = findBestFood();
   if (!foodItem) {
@@ -616,15 +644,23 @@ async function tryAutoEat() {
     return;
   }
 
+  isEating = true;
+  const wasFighting = bot.pvp && bot.pvp.target;
+  if (wasFighting) {
+    try { bot.pvp.stop(); } catch {}
+  }
+
   try {
     log(`[\u0415\u0414\u0410] \u0415\u043c ${ru(foodItem.name)} x${foodItem.count} (\u0433\u043e\u043b\u043e\u0434: ${bot.food})...`);
     await bot.equip(foodItem, 'hand');
     await bot.consume();
     log(`[\u0415\u0414\u0410] \u0413\u043e\u0442\u043e\u0432\u043e. \u0413\u043e\u043b\u043e\u0434: ${bot.food}`);
-    equipBestSword();
   } catch (e) {
     log(`[\u0415\u0414\u0410] \u041f\u0440\u0435\u0440\u0432\u0430\u043d\u043e: ${e.message}`);
   }
+
+  isEating = false;
+  await ensureSwordEquipped();
 }
 
 function findBestFood() {
@@ -650,16 +686,11 @@ function findBestFood() {
 
 function equipBestSword() {
   if (!bot || !bot.inventory) return;
-
-  for (const tier of SWORD_TIERS) {
-    const sword = bot.inventory.items().find(item => item.name === tier);
-    if (sword) {
-      bot.equip(sword, 'hand').then(() => {
-        log(`[\u042d\u041a\u0418\u041f] ${ru(tier)}`);
-      }).catch(() => {});
-      return;
-    }
-  }
+  const sword = findBestSword();
+  if (!sword) return;
+  bot.equip(sword, 'hand').then(() => {
+    log(`[\u042d\u041a\u0418\u041f] ${ru(sword.name)}`);
+  }).catch(() => {});
 }
 
 // =====================
