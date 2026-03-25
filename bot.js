@@ -421,13 +421,19 @@ function startReconnectCheck() {
 // FARMING (mob hunting)
 // =====================
 
+let statusLogCounter = 0;
+
 function startFarmLoop() {
   stopFarmLoop();
+  statusLogCounter = 0;
   farmLoopTimer = setInterval(() => {
     if (!bot || !farmActive || !bot.entity) return;
+    statusLogCounter++;
+    if (statusLogCounter % 30 === 0) logInventoryStatus();
     farmTick();
   }, 1000);
   log('Farm loop: scanning for mobs every 1s');
+  logInventoryStatus();
 }
 
 function stopFarmLoop() {
@@ -447,9 +453,45 @@ function farmTick() {
   if (!mob) return;
 
   const dist = bot.entity.position.distanceTo(mob.position);
-  log(`[FARM] Attacking ${mob.name || mob.displayName} at distance ${Math.floor(dist)}`);
+  const allMobs = countNearbyHostiles();
+  log(`[FARM] Attacking ${mob.name} (dist: ${Math.floor(dist)}, mobs nearby: ${allMobs})`);
 
   bot.pvp.attack(mob);
+}
+
+function logInventoryStatus() {
+  if (!bot || !bot.inventory) return;
+
+  const mainHand = bot.heldItem;
+  const offHand = bot.inventory.slots[45];
+  const mainStr = mainHand ? `${mainHand.name} x${mainHand.count}` : 'empty';
+  const offStr = offHand ? `${offHand.name} x${offHand.count}` : 'empty';
+
+  const foods = bot.inventory.items().filter(i => FOOD_VALUES[i.name]);
+  const foodStr = foods.length
+    ? foods.map(f => `${f.name} x${f.count}`).join(', ')
+    : 'none';
+
+  const swords = bot.inventory.items().filter(i => SWORD_TIERS.includes(i.name));
+  const swordStr = swords.length
+    ? swords.map(s => `${s.name}`).join(', ')
+    : 'none';
+
+  const mobs = countNearbyHostiles();
+
+  log(`[STATUS] HP: ${Math.floor(bot.health)} | Food: ${bot.food} | Main: ${mainStr} | Offhand: ${offStr}`);
+  log(`[STATUS] Swords: ${swordStr} | Food items: ${foodStr} | Mobs nearby: ${mobs}`);
+}
+
+function countNearbyHostiles() {
+  let count = 0;
+  for (const entity of Object.values(bot.entities)) {
+    if (!entity || entity === bot.entity) continue;
+    if (!entity.name || !HOSTILE_MOBS.has(entity.name)) continue;
+    if (!entity.position) continue;
+    if (bot.entity.position.distanceTo(entity.position) <= 32) count++;
+  }
+  return count;
 }
 
 function findNearestHostile() {
@@ -498,15 +540,19 @@ async function tryAutoEat() {
   if (bot.pvp && bot.pvp.target) return;
 
   const foodItem = findBestFood();
-  if (!foodItem) return;
+  if (!foodItem) {
+    log(`[EAT] No food in inventory! Hunger: ${bot.food}`);
+    return;
+  }
 
   try {
+    log(`[EAT] Eating ${foodItem.name} x${foodItem.count} (hunger: ${bot.food})...`);
     await bot.equip(foodItem, 'hand');
     await bot.consume();
-    log(`[EAT] Ate ${foodItem.name}, hunger: ${bot.food}`);
+    log(`[EAT] Done. Hunger now: ${bot.food}`);
     equipBestSword();
   } catch (e) {
-    // eating interrupted, not critical
+    log(`[EAT] Interrupted: ${e.message}`);
   }
 }
 
