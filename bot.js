@@ -165,6 +165,9 @@ function startBot() {
     bot._client.on('close_window', (packet) => {
       log(`[DEBUG] raw close_window: id=${packet.windowId}`);
     });
+    bot._client.on('window_items', (packet) => {
+      log(`[DEBUG] raw window_items: wid=${packet.windowId} items=${packet.items ? packet.items.length : '?'}`);
+    });
 
     if (!navigationDone && !spawnHandled) {
       log('\u0416\u0434\u0451\u043c 8 \u0441\u0435\u043a \u0437\u0430\u0433\u0440\u0443\u0437\u043a\u0443, \u043f\u043e\u0442\u043e\u043c /anarchy...');
@@ -832,19 +835,38 @@ function findBestFood() {
 
 function openChest(block) {
   return new Promise(async (resolve, reject) => {
+    let resolved = false;
+
     const timeout = setTimeout(() => {
-      bot.removeListener('windowOpen', onOpen);
+      if (resolved) return;
+      resolved = true;
+      bot._client.removeListener('window_items', onItems);
       log(`[\u0421\u0423\u041d\u0414\u0423\u041a] \u0422\u0430\u0439\u043c\u0430\u0443\u0442, \u0431\u043b\u043e\u043a: ${block.name} \u043d\u0430 ${block.position}`);
-      reject(new Error('timeout 5s'));
+      reject(new Error('timeout 8s'));
     }, 8000);
 
-    function onOpen(window) {
+    function onItems(packet) {
+      if (resolved) return;
+      if (packet.windowId === 0) return;
+      resolved = true;
       clearTimeout(timeout);
-      log(`[\u0421\u0423\u041d\u0414\u0423\u041a] \u041e\u043a\u043d\u043e \u043e\u0442\u043a\u0440\u044b\u043b\u043e\u0441\u044c: ${window.type}, \u0441\u043b\u043e\u0442\u043e\u0432: ${window.slots.length}`);
-      resolve(window);
+      bot._client.removeListener('window_items', onItems);
+
+      log(`[\u0421\u0423\u041d\u0414\u0423\u041a] window_items: wid=${packet.windowId}, items=${packet.items.length}`);
+
+      setTimeout(() => {
+        const window = bot.currentWindow;
+        if (window) {
+          log(`[\u0421\u0423\u041d\u0414\u0423\u041a] \u041e\u043a\u043d\u043e \u043e\u0442\u043a\u0440\u044b\u043b\u043e\u0441\u044c: id=${window.id}, \u0441\u043b\u043e\u0442\u043e\u0432: ${window.slots.length}`);
+          resolve(window);
+        } else {
+          log(`[\u0421\u0423\u041d\u0414\u0423\u041a] currentWindow = null \u043f\u043e\u0441\u043b\u0435 window_items`);
+          reject(new Error('no currentWindow after window_items'));
+        }
+      }, 200);
     }
 
-    bot.once('windowOpen', onOpen);
+    bot._client.on('window_items', onItems);
 
     try {
       const pos = block.position;
@@ -863,9 +885,12 @@ function openChest(block) {
       bot.swingArm();
       log(`[\u0421\u0423\u041d\u0414\u0423\u041a] block_place \u043e\u0442\u043f\u0440\u0430\u0432\u043b\u0435\u043d \u043d\u0430 ${pos}`);
     } catch (e) {
-      clearTimeout(timeout);
-      bot.removeListener('windowOpen', onOpen);
-      reject(e);
+      if (!resolved) {
+        resolved = true;
+        clearTimeout(timeout);
+        bot._client.removeListener('window_items', onItems);
+        reject(e);
+      }
     }
   });
 }
