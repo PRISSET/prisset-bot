@@ -822,6 +822,23 @@ function findBestFood() {
 // INVENTORY MANAGEMENT (chests, trash, storage)
 // =====================
 
+function openChest(block) {
+  return new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      bot.removeListener('windowOpen', onOpen);
+      reject(new Error('timeout 3s'));
+    }, 3000);
+
+    function onOpen(window) {
+      clearTimeout(timeout);
+      resolve(window);
+    }
+
+    bot.once('windowOpen', onOpen);
+    bot.activateBlock(block);
+  });
+}
+
 function findNearbyChests() {
   if (!bot || !bot.entity) return [];
   const chests = [];
@@ -862,37 +879,42 @@ async function takeFoodFromChest() {
   for (const chest of chests) {
     try {
       const chestCenter = chest.position.offset(0.5, 0.5, 0.5);
+      const dist = bot.entity.position.distanceTo(chest.position);
+      log(`[\u0421\u0423\u041d\u0414\u0423\u041a] \u041e\u0442\u043a\u0440\u044b\u0432\u0430\u044e ${chest.name} \u043d\u0430 ${dist.toFixed(1)} \u0431\u043b.`);
       await bot.lookAt(chestCenter);
       await sleep(200);
 
-      const container = await bot.openContainer(chest);
-      if (!container) continue;
+      const window = await openChest(chest);
+      if (!window) continue;
 
-      await sleep(300);
+      await sleep(500);
 
-      const containerSlots = container.containerItems();
+      const containerSlots = window.slots.filter((s, idx) => s && idx < window.inventoryStart);
       if (containerSlots.length > 0) {
         const names = containerSlots.map(i => `${i.name}x${i.count}`).join(', ');
         log(`[\u0421\u0423\u041d\u0414\u0423\u041a] \u0421\u043e\u0434\u0435\u0440\u0436\u0438\u043c\u043e\u0435: ${names}`);
       } else {
         log('[\u0421\u0423\u041d\u0414\u0423\u041a] \u041f\u0443\u0441\u0442\u043e\u0439');
+        bot.closeWindow(window);
+        await sleep(300);
+        continue;
       }
 
       let tookFood = false;
       for (const item of containerSlots) {
         if (FOOD_VALUES[item.name]) {
-          log(`[\u0421\u0423\u041d\u0414\u0423\u041a] \u0411\u0435\u0440\u0443 ${ru(item.name)} x${item.count}`);
+          log(`[\u0421\u0423\u041d\u0414\u0423\u041a] \u0411\u0435\u0440\u0443 ${ru(item.name)} x${item.count} \u0438\u0437 \u0441\u043b\u043e\u0442\u0430 ${item.slot}`);
           try {
-            await container.withdraw(item.type, null, item.count);
+            await bot.clickWindow(item.slot, 0, 0);
+            await sleep(200);
             tookFood = true;
           } catch (e) {
             log(`[\u0421\u0423\u041d\u0414\u0423\u041a] \u041e\u0448\u0438\u0431\u043a\u0430 \u0432\u0437\u044f\u0442\u0438\u044f: ${e.message}`);
           }
-          await sleep(200);
         }
       }
 
-      container.close();
+      bot.closeWindow(window);
       await sleep(300);
 
       if (tookFood) {
@@ -943,24 +965,24 @@ async function manageInventory() {
           await bot.lookAt(chestCenter);
           await sleep(200);
 
-          const container = await bot.openContainer(chest);
-          if (!container) continue;
+          const window = await openChest(chest);
+          if (!window) continue;
 
-          await sleep(300);
+          await sleep(500);
 
           const currentStore = bot.inventory.items().filter(i => STORE_IN_CHEST.has(i.name));
           for (const item of currentStore) {
             if (PROTECTED_ITEMS.has(item.name)) continue;
+            log(`[\u0421\u0423\u041d\u0414\u0423\u041a] \u041a\u043b\u0430\u0434\u0443 ${ru(item.name)} x${item.count}`);
             try {
-              log(`[\u0421\u0423\u041d\u0414\u0423\u041a] \u041a\u043b\u0430\u0434\u0443 ${ru(item.name)} x${item.count}`);
-              await container.deposit(item.type, null, item.count);
+              await bot.clickWindow(item.slot, 0, 0);
               await sleep(200);
             } catch (e) {
               log(`[\u0421\u0423\u041d\u0414\u0423\u041a] \u041e\u0448\u0438\u0431\u043a\u0430 \u0441\u043a\u043b\u0430\u0434\u0438\u0440\u043e\u0432\u0430\u043d\u0438\u044f: ${e.message}`);
             }
           }
 
-          container.close();
+          bot.closeWindow(window);
           await sleep(300);
           break;
         } catch (e) {
