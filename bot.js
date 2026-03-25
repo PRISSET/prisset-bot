@@ -33,6 +33,24 @@ const HOSTILE_MOBS = new Set([
 const SWORD_TIERS = ['netherite_sword', 'diamond_sword'];
 const ATTACK_RANGE = 4;
 const ATTACK_COOLDOWN_MS = 600;
+const CHEST_SEARCH_RANGE = 4;
+
+const TRASH_ITEMS = new Set([
+  'rotten_flesh', 'golden_sword', 'wooden_sword', 'stone_sword',
+  'iron_sword', 'poisonous_potato', 'spider_eye'
+]);
+
+const STORE_IN_CHEST = new Set([
+  'gold_ingot', 'gold_nugget'
+]);
+
+const PROTECTED_ITEMS = new Set([
+  'netherite_sword', 'diamond_sword'
+]);
+
+let isManagingInventory = false;
+let lastInventoryManageTime = 0;
+const INVENTORY_MANAGE_COOLDOWN = 30000;
 
 const MOB_NAMES_RU = {
   'zombie': '\u0437\u043e\u043c\u0431\u0438', 'skeleton': '\u0441\u043a\u0435\u043b\u0435\u0442',
@@ -508,7 +526,10 @@ function startFarmLoop() {
   farmLoopTimer = setInterval(() => {
     if (!bot || !farmActive || !bot.entity) return;
     statusLogCounter++;
-    if (statusLogCounter % 60 === 0) logInventoryStatus();
+    if (statusLogCounter % 60 === 0) {
+      logInventoryStatus();
+      manageInventory();
+    }
     farmTick();
   }, 500);
   log('\u0424\u0430\u0440\u043c: \u043f\u043e\u0438\u0441\u043a \u043c\u043e\u0431\u043e\u0432 \u043a\u0430\u0436\u0434\u044b\u0435 0.5\u0441');
@@ -525,6 +546,7 @@ function stopFarmLoop() {
 async function farmTick() {
   if (isAtSpawn()) return;
   if (isEating) return;
+  if (isManagingInventory) return;
 
   const now = Date.now();
   if (now - lastAttackTime < ATTACK_COOLDOWN_MS) return;
@@ -713,23 +735,30 @@ async function tryAutoEat() {
   if (bot.food >= 14) return;
   if (isEating) return;
 
-  const foodItem = findBestFood();
+  let foodItem = findBestFood();
   if (!foodItem) {
-    log(`[\u0415\u0414\u0410] \u041d\u0435\u0442 \u0435\u0434\u044b! \u0413\u043e\u043b\u043e\u0434: ${bot.food}`);
-    const now = Date.now();
-    if (now - lastHungryTgTime > 5 * 60 * 1000) {
-      lastHungryTgTime = now;
-      sendTelegram(`[PRISSET BOT] \u044f \u0445\u043e\u0447\u0443 \u0416\u0420\u0410\u0422\u042c \u0414\u0410\u0419\u0422\u0415 \u041f\u041e\u0416\u0420\u0410\u0422\u042c \u041c\u041d\u0415\n\u0413\u043e\u043b\u043e\u0434: ${bot.food}/20`);
+    log(`[\u0415\u0414\u0410] \u041d\u0435\u0442 \u0435\u0434\u044b \u0432 \u0438\u043d\u0432\u0435\u043d\u0442\u0430\u0440\u0435, \u0438\u0449\u0443 \u0432 \u0441\u0443\u043d\u0434\u0443\u043a\u0430\u0445...`);
+    const found = await takeFoodFromChest();
+    if (found) {
+      foodItem = findBestFood();
     }
-    if (bot.food <= 6) {
-      log(`[\u0415\u0414\u0410] \u041a\u0440\u0438\u0442\u0438\u0447\u0435\u0441\u043a\u0438\u0439 \u0433\u043e\u043b\u043e\u0434 (${bot.food}), \u043d\u0435\u0442 \u0435\u0434\u044b. \u041e\u0442\u043a\u043b\u044e\u0447\u0430\u0435\u043c\u0441\u044f!`);
-      sendTelegram(`[PRISSET BOT] \u041a\u0440\u0438\u0442\u0438\u0447\u0435\u0441\u043a\u0438\u0439 \u0433\u043e\u043b\u043e\u0434 (${bot.food}/20), \u0435\u0434\u044b \u043d\u0435\u0442. \u0411\u043e\u0442 \u043e\u0442\u043a\u043b\u044e\u0447\u0438\u043b\u0441\u044f.`);
-      if (bot) bot.quit('No food, starving');
-      cleanup();
-      bot = null;
-      log('\u0411\u043e\u0442 \u043e\u0441\u0442\u0430\u043d\u043e\u0432\u043b\u0435\u043d. /start \u0434\u043b\u044f \u043f\u0435\u0440\u0435\u0437\u0430\u043f\u0443\u0441\u043a\u0430.');
+    if (!foodItem) {
+      log(`[\u0415\u0414\u0410] \u041d\u0435\u0442 \u0435\u0434\u044b! \u0413\u043e\u043b\u043e\u0434: ${bot.food}`);
+      const now = Date.now();
+      if (now - lastHungryTgTime > 5 * 60 * 1000) {
+        lastHungryTgTime = now;
+        sendTelegram(`[PRISSET BOT] \u044f \u0445\u043e\u0447\u0443 \u0416\u0420\u0410\u0422\u042c \u0414\u0410\u0419\u0422\u0415 \u041f\u041e\u0416\u0420\u0410\u0422\u042c \u041c\u041d\u0415\n\u0413\u043e\u043b\u043e\u0434: ${bot.food}/20`);
+      }
+      if (bot && bot.food <= 6) {
+        log(`[\u0415\u0414\u0410] \u041a\u0440\u0438\u0442\u0438\u0447\u0435\u0441\u043a\u0438\u0439 \u0433\u043e\u043b\u043e\u0434 (${bot.food}), \u043d\u0435\u0442 \u0435\u0434\u044b. \u041e\u0442\u043a\u043b\u044e\u0447\u0430\u0435\u043c\u0441\u044f!`);
+        sendTelegram(`[PRISSET BOT] \u041a\u0440\u0438\u0442\u0438\u0447\u0435\u0441\u043a\u0438\u0439 \u0433\u043e\u043b\u043e\u0434 (${bot.food}/20), \u0435\u0434\u044b \u043d\u0435\u0442. \u0411\u043e\u0442 \u043e\u0442\u043a\u043b\u044e\u0447\u0438\u043b\u0441\u044f.`);
+        if (bot) bot.quit('No food, starving');
+        cleanup();
+        bot = null;
+        log('\u0411\u043e\u0442 \u043e\u0441\u0442\u0430\u043d\u043e\u0432\u043b\u0435\u043d. /start \u0434\u043b\u044f \u043f\u0435\u0440\u0435\u0437\u0430\u043f\u0443\u0441\u043a\u0430.');
+      }
+      return;
     }
-    return;
   }
 
   isEating = true;
@@ -762,6 +791,147 @@ function findBestFood() {
   }
 
   return best;
+}
+
+// =====================
+// INVENTORY MANAGEMENT (chests, trash, storage)
+// =====================
+
+function findNearbyChests() {
+  if (!bot || !bot.entity) return [];
+  const chests = [];
+  const pos = bot.entity.position;
+
+  for (let dx = -CHEST_SEARCH_RANGE; dx <= CHEST_SEARCH_RANGE; dx++) {
+    for (let dy = -2; dy <= 2; dy++) {
+      for (let dz = -CHEST_SEARCH_RANGE; dz <= CHEST_SEARCH_RANGE; dz++) {
+        const block = bot.blockAt(pos.offset(dx, dy, dz));
+        if (!block) continue;
+        if (block.name === 'chest' || block.name === 'trapped_chest' || block.name === 'barrel') {
+          chests.push(block);
+        }
+      }
+    }
+  }
+
+  chests.sort((a, b) => {
+    const da = pos.distanceTo(a.position);
+    const db = pos.distanceTo(b.position);
+    return da - db;
+  });
+
+  return chests;
+}
+
+async function takeFoodFromChest() {
+  if (!bot || !bot.entity || isManagingInventory) return false;
+
+  const chests = findNearbyChests();
+  if (chests.length === 0) {
+    log('[\u0421\u0423\u041d\u0414\u0423\u041a] \u041d\u0435\u0442 \u0441\u0443\u043d\u0434\u0443\u043a\u043e\u0432 \u0440\u044f\u0434\u043e\u043c');
+    return false;
+  }
+
+  isManagingInventory = true;
+
+  for (const chest of chests) {
+    try {
+      const container = await bot.openContainer(chest);
+      if (!container) continue;
+
+      await sleep(300);
+
+      let tookFood = false;
+      for (const item of container.containerItems()) {
+        if (FOOD_VALUES[item.name]) {
+          log(`[\u0421\u0423\u041d\u0414\u0423\u041a] \u0411\u0435\u0440\u0443 ${ru(item.name)} x${item.count}`);
+          try {
+            await container.withdraw(item.type, null, item.count);
+            tookFood = true;
+          } catch (e) {
+            log(`[\u0421\u0423\u041d\u0414\u0423\u041a] \u041e\u0448\u0438\u0431\u043a\u0430 \u0432\u0437\u044f\u0442\u0438\u044f: ${e.message}`);
+          }
+          await sleep(200);
+        }
+      }
+
+      container.close();
+      await sleep(300);
+
+      if (tookFood) {
+        isManagingInventory = false;
+        return true;
+      }
+    } catch (e) {
+      log(`[\u0421\u0423\u041d\u0414\u0423\u041a] \u041e\u0448\u0438\u0431\u043a\u0430 \u043e\u0442\u043a\u0440\u044b\u0442\u0438\u044f: ${e.message}`);
+    }
+  }
+
+  isManagingInventory = false;
+  return false;
+}
+
+async function manageInventory() {
+  if (!bot || !bot.entity || isManagingInventory) return;
+  if (isEating) return;
+
+  const now = Date.now();
+  if (now - lastInventoryManageTime < INVENTORY_MANAGE_COOLDOWN) return;
+  lastInventoryManageTime = now;
+
+  const trashItems = bot.inventory.items().filter(i => TRASH_ITEMS.has(i.name));
+  const storeItems = bot.inventory.items().filter(i => STORE_IN_CHEST.has(i.name));
+
+  if (trashItems.length === 0 && storeItems.length === 0) return;
+
+  isManagingInventory = true;
+
+  for (const item of trashItems) {
+    if (PROTECTED_ITEMS.has(item.name)) continue;
+    try {
+      log(`[\u0418\u041d\u0412\u0415\u041d\u0422\u0410\u0420\u042c] \u0412\u044b\u0431\u0440\u0430\u0441\u044b\u0432\u0430\u044e ${ru(item.name)} x${item.count}`);
+      await bot.tossStack(item);
+      await sleep(300);
+    } catch (e) {
+      log(`[\u0418\u041d\u0412\u0415\u041d\u0422\u0410\u0420\u042c] \u041e\u0448\u0438\u0431\u043a\u0430 \u0432\u044b\u0431\u0440\u043e\u0441\u0430: ${e.message}`);
+    }
+  }
+
+  if (storeItems.length > 0) {
+    const chests = findNearbyChests();
+    if (chests.length > 0) {
+      for (const chest of chests) {
+        try {
+          const container = await bot.openContainer(chest);
+          if (!container) continue;
+
+          await sleep(300);
+
+          const currentStore = bot.inventory.items().filter(i => STORE_IN_CHEST.has(i.name));
+          for (const item of currentStore) {
+            if (PROTECTED_ITEMS.has(item.name)) continue;
+            try {
+              log(`[\u0421\u0423\u041d\u0414\u0423\u041a] \u041a\u043b\u0430\u0434\u0443 ${ru(item.name)} x${item.count}`);
+              await container.deposit(item.type, null, item.count);
+              await sleep(200);
+            } catch (e) {
+              log(`[\u0421\u0423\u041d\u0414\u0423\u041a] \u041e\u0448\u0438\u0431\u043a\u0430 \u0441\u043a\u043b\u0430\u0434\u0438\u0440\u043e\u0432\u0430\u043d\u0438\u044f: ${e.message}`);
+            }
+          }
+
+          container.close();
+          await sleep(300);
+          break;
+        } catch (e) {
+          log(`[\u0421\u0423\u041d\u0414\u0423\u041a] \u041e\u0448\u0438\u0431\u043a\u0430 \u043e\u0442\u043a\u0440\u044b\u0442\u0438\u044f: ${e.message}`);
+        }
+      }
+    } else {
+      log('[\u0421\u0423\u041d\u0414\u0423\u041a] \u041d\u0435\u0442 \u0441\u0443\u043d\u0434\u0443\u043a\u043e\u0432 \u0434\u043b\u044f \u0441\u043a\u043b\u0430\u0434\u0438\u0440\u043e\u0432\u0430\u043d\u0438\u044f \u0437\u043e\u043b\u043e\u0442\u0430');
+    }
+  }
+
+  isManagingInventory = false;
 }
 
 // =====================
