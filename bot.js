@@ -185,6 +185,14 @@ function startBot() {
     log(`\u041e\u0442\u043a\u043b\u044e\u0447\u0435\u043d\u043e: ${reason}`);
     cleanup();
     bot = null;
+    if (!reconnecting) {
+      log('\u0410\u0432\u0442\u043e-\u0440\u0435\u043a\u043e\u043d\u043d\u0435\u043a\u0442 \u0447\u0435\u0440\u0435\u0437 15\u0441...');
+      setTimeout(() => {
+        if (!bot && !reconnecting) {
+          startBot();
+        }
+      }, 15000);
+    }
   });
 
   bot.on('kicked', (reason) => {
