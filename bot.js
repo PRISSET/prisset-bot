@@ -46,6 +46,8 @@ function setupPathfinder() {
     const mcData = minecraftData(state.bot.version);
     const movements = new Movements(state.bot, mcData);
     movements.allow1by1towers = false;
+    movements.allowParkour = false;
+    movements.canDig = true;
     movements.scafoldingBlocks = [];
     state.bot.pathfinder.setMovements(movements);
     log('[PATH] Pathfinder ready');

@@ -4,27 +4,25 @@ import { SKIP_BLOCKS, DANGEROUS_BLOCKS, MAX_REACH, MAX_DIG_RETRIES, DIG_DELAY, r
 import { isInZone, isBlockBroken, canSafelyDig, waitWhileEating } from './checks.js';
 import { log, sleep } from '../utils.js';
 
+export const DIG_TOO_FAR = 'too_far';
+
+function isAir(bot, bp) {
+  const b = bot.blockAt(bp);
+  return !b || SKIP_BLOCKS.has(b.name) || b.boundingBox === 'empty';
+}
+
 export async function digTarget(bot, bp) {
   if (!mineState.active || !bot.entity) return;
 
   const block = bot.blockAt(bp);
-  if (!block) {
-    log(`[DIG] No block data @ (${bp.x},${bp.y},${bp.z}), chunk not loaded?`);
-    return;
-  }
+  if (!block) return;
   if (SKIP_BLOCKS.has(block.name) || block.boundingBox === 'empty') return;
-  if (!canSafelyDig(bot, bp)) {
-    log(`[DIG] Unsafe neighbors for (${bp.x},${bp.y},${bp.z}), skipping`);
-    return;
-  }
+  if (!canSafelyDig(bot, bp)) return;
 
   const eyePos = bot.entity.position.offset(0, bot.entity.eyeHeight, 0);
   const dist = eyePos.distanceTo(bp.offset(0.5, 0.5, 0.5));
 
-  if (dist > MAX_REACH) {
-    log(`[DIG] Too far: ${block.name} @ (${bp.x},${bp.y},${bp.z}) dist=${dist.toFixed(1)} eye=(${eyePos.x.toFixed(1)},${eyePos.y.toFixed(1)},${eyePos.z.toFixed(1)}), skipping`);
-    return;
-  }
+  if (dist > MAX_REACH) return DIG_TOO_FAR;
 
   for (let attempt = 0; attempt < MAX_DIG_RETRIES; attempt++) {
     if (!mineState.active || !bot.entity) return;
@@ -38,27 +36,25 @@ export async function digTarget(bot, bp) {
     }
 
     const useGlance = attempt > 0;
-    const close = dist < 1.5;
-    log(`[DIG] Attempt ${attempt + 1}/${MAX_DIG_RETRIES} ${current.name} @ (${bp.x},${bp.y},${bp.z}) dist=${dist.toFixed(1)}${useGlance ? ' (glance)' : ''}${close ? ' (close)' : ''}`);
 
     const t0 = Date.now();
     const ok = await safeDig(bot, current, useGlance);
-    const dt = Date.now() - t0;
 
     if (!ok) {
-      log(`[DIG] safeDig failed (${dt}ms)`);
-      await sleep(rnd(100, 200));
+      await sleep(rnd(50, 120));
       continue;
     }
 
-    if (isBlockBroken(bot, bp)) {
+    const confirmed = await waitForServerConfirm(bot, bp, 120);
+    const totalDt = Date.now() - t0;
+
+    if (confirmed) {
       if (isInZone(bp)) mineState.mined++;
-      log(`[DIG] OK ${current.name} in ${dt}ms`);
       break;
     }
 
-    log(`[DIG] Block not broken after attempt ${attempt + 1} (${dt}ms)`);
-    await sleep(rnd(50, 150));
+    log(`[DIG] Not broken attempt ${attempt + 1} ${current.name} @ (${bp.x},${bp.y},${bp.z}) ${totalDt}ms`);
+    await sleep(rnd(30, 70));
   }
 
   if (mineState.mined > 0 && mineState.mined % 50 === 0) {
@@ -76,19 +72,7 @@ const FACE_OFFSETS = [
   [1.0, 0.5, 0.5],
 ];
 
-const CLOSE_FACES = [
-  [0.5, 1.0, 0.5],
-  [0.5, 0.0, 0.5],
-  [0.5, 0.5, 0.0],
-  [0.5, 0.5, 1.0],
-  [0.0, 0.5, 0.5],
-  [1.0, 0.5, 0.5],
-];
-
 export async function safeDig(bot, block, glance) {
-  bot.clearControlStates();
-
-  await waitWhileEating();
   if (!mineState.active || !bot.entity) return false;
 
   const bp = block.position;
@@ -97,30 +81,19 @@ export async function safeDig(bot, block, glance) {
 
   if (dist > MAX_REACH) return false;
 
-  if (dist < 3) {
-    return await digClose(bot, block, bp);
-  }
-
-  const eyeY = bot.entity.position.y + bot.entity.eyeHeight;
-  const offX = (Math.random() - 0.5) * 0.6;
-  const offZ = (Math.random() - 0.5) * 0.6;
-  await bot.lookAt(new Vec3(bp.x + 0.5 + offX, eyeY, bp.z + 0.5 + offZ), false);
-  await sleep(50);
-
   if (glance) {
     const adj = findAdjacentBlock(bot, block);
     if (adj) {
       await bot.lookAt(adj.position.offset(0.5, 0.5, 0.5), false);
-      await sleep(DIG_DELAY);
+      await sleep(40);
     }
   }
 
   await bot.lookAt(bp.offset(0.5, 0.5, 0.5), false);
-  await sleep(DIG_DELAY);
+  await sleep(40);
 
   try {
     await bot.dig(block, 'raycast');
-    await sleep(DIG_DELAY);
     return true;
   } catch (err) {
     if (err.message === 'Digging aborted') return false;
@@ -130,16 +103,16 @@ export async function safeDig(bot, block, glance) {
   for (const [fx, fy, fz] of FACE_OFFSETS) {
     if (!mineState.active || !bot.entity) return false;
     const facePoint = bp.offset(fx, fy, fz);
-    if (eyePos.distanceTo(facePoint) > MAX_REACH) continue;
+    const freshEye = bot.entity.position.offset(0, bot.entity.eyeHeight, 0);
+    if (freshEye.distanceTo(facePoint) > MAX_REACH) continue;
 
     await bot.lookAt(facePoint, false);
-    await sleep(DIG_DELAY);
+    await sleep(40);
 
     try {
       const freshBlock = bot.blockAt(bp);
       if (!freshBlock || SKIP_BLOCKS.has(freshBlock.name) || freshBlock.boundingBox === 'empty') return true;
       await bot.dig(freshBlock, 'raycast');
-      await sleep(DIG_DELAY);
       return true;
     } catch (err2) {
       if (err2.message === 'Digging aborted') return false;
@@ -147,55 +120,6 @@ export async function safeDig(bot, block, glance) {
     }
   }
 
-  log(`[DIG] Cannot see block @ (${bp.x},${bp.y},${bp.z}) from any face, skipping`);
-  return false;
-}
-
-async function digClose(bot, block, bp) {
-  const result = await tryDigFaces(bot, bp);
-  if (result) return true;
-
-  const pos = bot.entity.position;
-  const dx = pos.x - (bp.x + 0.5);
-  const dz = pos.z - (bp.z + 0.5);
-  const len = Math.sqrt(dx * dx + dz * dz) || 1;
-  const stepBack = new Vec3(pos.x + (dx / len) * 1.5, pos.y, pos.z + (dz / len) * 1.5);
-
-  log(`[DIG] Too close to (${bp.x},${bp.y},${bp.z}), stepping back`);
-
-  const lookAt = new Vec3(stepBack.x, pos.y + 1, stepBack.z);
-  await bot.lookAt(lookAt, false);
-  bot.setControlState('back', true);
-  await sleep(250);
-  bot.clearControlStates();
-  await sleep(100);
-
-  const fresh = bot.blockAt(bp);
-  if (!fresh || SKIP_BLOCKS.has(fresh.name) || fresh.boundingBox === 'empty') return true;
-
-  return await tryDigFaces(bot, bp);
-}
-
-async function tryDigFaces(bot, bp) {
-  const eyePos = bot.entity.position.offset(0, bot.entity.eyeHeight, 0);
-  for (const [fx, fy, fz] of CLOSE_FACES) {
-    if (!mineState.active || !bot.entity) return false;
-    const facePoint = bp.offset(fx, fy, fz);
-    if (eyePos.distanceTo(facePoint) > MAX_REACH) continue;
-    await bot.lookAt(facePoint, false);
-    await sleep(DIG_DELAY);
-
-    try {
-      const fresh = bot.blockAt(bp);
-      if (!fresh || SKIP_BLOCKS.has(fresh.name) || fresh.boundingBox === 'empty') return true;
-      await bot.dig(fresh, 'raycast');
-      await sleep(DIG_DELAY);
-      return true;
-    } catch (err) {
-      if (err.message === 'Digging aborted') return false;
-      if (err.message !== 'Block not in view') continue;
-    }
-  }
   return false;
 }
 
@@ -208,10 +132,11 @@ export async function digSimple(bot, block, bp) {
   if (eyePos.distanceTo(bp.offset(0.5, 0.5, 0.5)) > MAX_REACH) return false;
 
   await bot.lookAt(bp.offset(0.5, 0.5, 0.5), false);
-  await sleep(DIG_DELAY);
+  await sleep(40);
 
   try {
     await bot.dig(block, 'raycast');
+    return isAir(bot, bp);
   } catch {
     for (const [fx, fy, fz] of FACE_OFFSETS) {
       if (!mineState.active || !bot.entity) return false;
@@ -219,7 +144,7 @@ export async function digSimple(bot, block, bp) {
       const facePoint = bp.offset(fx, fy, fz);
       if (freshEye.distanceTo(facePoint) > MAX_REACH) continue;
       await bot.lookAt(facePoint, false);
-      await sleep(DIG_DELAY);
+      await sleep(40);
       try {
         const fresh = bot.blockAt(bp);
         if (!fresh || SKIP_BLOCKS.has(fresh.name) || fresh.boundingBox === 'empty') {
@@ -227,8 +152,7 @@ export async function digSimple(bot, block, bp) {
           return true;
         }
         await bot.dig(fresh, 'raycast');
-        await sleep(DIG_DELAY);
-        const broken = isBlockBroken(bot, bp);
+        const broken = isAir(bot, bp);
         if (broken && isInZone(bp)) mineState.mined++;
         return broken;
       } catch {
@@ -237,11 +161,16 @@ export async function digSimple(bot, block, bp) {
     }
     return false;
   }
+}
 
-  await sleep(DIG_DELAY);
-  const broken = isBlockBroken(bot, bp);
-  if (broken && isInZone(bp)) mineState.mined++;
-  return broken;
+async function waitForServerConfirm(bot, bp, timeoutMs) {
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    if (!bot.entity || !mineState.active) return false;
+    if (isAir(bot, bp)) return true;
+    await sleep(25);
+  }
+  return isAir(bot, bp);
 }
 
 function findAdjacentBlock(bot, block) {

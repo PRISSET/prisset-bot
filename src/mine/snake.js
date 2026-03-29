@@ -18,18 +18,43 @@ export function buildSnake() {
 
 export function reorderSnake(snake, bot) {
   const pos = bot.entity.position;
-  let bestIdx = 0;
-  let bestDist = Infinity;
-  for (let i = 0; i < snake.length; i++) {
-    const dx = snake[i].x + 0.5 - pos.x;
-    const dz = snake[i].z + 0.5 - pos.z;
-    const d = dx * dx + dz * dz;
-    if (d < bestDist) {
-      bestDist = d;
-      bestIdx = i;
+  const { zone } = mineState;
+  const botX = Math.round(pos.x - 0.5);
+  const botZ = Math.round(pos.z - 0.5);
+
+  const clampedZ = Math.max(zone.minZ, Math.min(zone.maxZ, botZ));
+  const clampedX = Math.max(zone.minX, Math.min(zone.maxX, botX));
+
+  const zValues = [];
+  for (let z = clampedZ; z <= zone.maxZ; z++) zValues.push(z);
+  for (let z = clampedZ - 1; z >= zone.minZ; z--) zValues.push(z);
+
+  const path = [];
+  for (let ri = 0; ri < zValues.length; ri++) {
+    const z = zValues[ri];
+    const row = [];
+    for (let x = zone.minX; x <= zone.maxX; x++) row.push({ x, z });
+
+    if (ri === 0) {
+      const startLeft = Math.abs(clampedX - zone.minX) <= Math.abs(clampedX - zone.maxX);
+      if (!startLeft) row.reverse();
+
+      const startIdx = row.findIndex(p => p.x === clampedX);
+      if (startIdx > 0) {
+        const reordered = [...row.slice(startIdx), ...row.slice(0, startIdx)];
+        path.push(...reordered);
+      } else {
+        path.push(...row);
+      }
+    } else {
+      const prevLast = path[path.length - 1];
+      const distToFirst = Math.abs(row[0].x - prevLast.x);
+      const distToLast = Math.abs(row[row.length - 1].x - prevLast.x);
+      if (distToLast < distToFirst) row.reverse();
+      path.push(...row);
     }
   }
-  if (bestIdx === 0) return snake;
-  log(`[MINE] Reorder snake: starting from index ${bestIdx} (${snake[bestIdx].x},${snake[bestIdx].z}) instead of (${snake[0].x},${snake[0].z})`);
-  return [...snake.slice(bestIdx), ...snake.slice(0, bestIdx)];
+
+  log(`[MINE] Reorder snake: start (${path[0].x},${path[0].z}), bot@(${botX},${botZ}), ${path.length} positions`);
+  return path;
 }
