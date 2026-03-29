@@ -819,6 +819,7 @@ function isMineComplete() {
 }
 
 async function mineLoop() {
+  log('[MINE] \u0426\u0438\u043a\u043b \u043a\u043e\u043f\u0430\u043d\u0438\u044f \u0437\u0430\u043f\u0443\u0449\u0435\u043d');
   while (mineActive && bot && bot.entity) {
     try {
       if (isEating || isManagingInventory) {
@@ -828,36 +829,15 @@ async function mineLoop() {
       await mineTick();
     } catch (e) {
       log(`[MINE] \u041e\u0448\u0438\u0431\u043a\u0430 \u0446\u0438\u043a\u043b\u0430: ${e.message}`);
+      await sleep(500);
     }
-    await sleep(150);
+    await sleep(50);
   }
   if (!mineActive) log('[MINE] \u0426\u0438\u043a\u043b \u043a\u043e\u043f\u0430\u043d\u0438\u044f \u043e\u0441\u0442\u0430\u043d\u043e\u0432\u043b\u0435\u043d');
 }
 
 async function mineTick() {
   if (!bot || !mineActive || !bot.entity || isMining) return;
-
-  if (isMineComplete()) {
-    log('[MINE] \u0417\u043e\u043d\u0430 \u043f\u043e\u043b\u043d\u043e\u0441\u0442\u044c\u044e \u0432\u044b\u043a\u043e\u043f\u0430\u043d\u0430!');
-    sendTelegram('[PRISSET BOT] \u0417\u043e\u043d\u0430 \u043f\u043e\u043b\u043d\u043e\u0441\u0442\u044c\u044e \u0432\u044b\u043a\u043e\u043f\u0430\u043d\u0430!');
-    stopMineMode();
-    startFarmMode();
-    return;
-  }
-
-  if (mineState.minedCount > 0 && mineState.minedCount % 50 === 0) {
-    await manageInventory().catch(() => {});
-  }
-
-  const target = new Vec3(mineState.curX, mineState.curY, mineState.curZ);
-  const block = bot.blockAt(target);
-
-  if (!block || SKIP_BLOCKS.has(block.name) || block.boundingBox === 'empty') {
-    mineState.skippedCount++;
-    mineState.walkFails = 0;
-    advanceMinePosition();
-    return;
-  }
 
   const botPos = bot.entity.position;
   const botBlock = bot.blockAt(new Vec3(Math.floor(botPos.x), Math.floor(botPos.y), Math.floor(botPos.z)));
@@ -867,61 +847,108 @@ async function mineTick() {
     return;
   }
 
-  if (hasAdjacentDanger(target)) {
-    log(`[MINE] \u041f\u0440\u043e\u043f\u0443\u0441\u043a ${mineState.curX},${mineState.curY},${mineState.curZ} - \u0440\u044f\u0434\u043e\u043c \u043b\u0430\u0432\u0430/\u0432\u043e\u0434\u0430`);
+  if (mineState.minedCount > 0 && mineState.minedCount % 50 === 0) {
+    await manageInventory().catch(() => {});
+  }
+
+  const reachable = findNearestReachableBlock();
+  if (reachable) {
+    mineState.walkFails = 0;
+    await ensurePickaxeEquipped();
+
+    if (!findBestPickaxe() && !bot.heldItem?.name?.includes('pickaxe')) {
+      log('[MINE] \u041d\u0435\u0442 \u043a\u0438\u0440\u043a\u0438! \u041e\u0441\u0442\u0430\u043d\u043e\u0432\u043a\u0430.');
+      sendTelegram('[PRISSET BOT] \u041d\u0435\u0442 \u043a\u0438\u0440\u043a\u0438! \u041a\u043e\u043f\u0430\u043d\u0438\u0435 \u043e\u0441\u0442\u0430\u043d\u043e\u0432\u043b\u0435\u043d\u043e.');
+      stopMineMode();
+      return;
+    }
+
+    isMining = true;
+    try {
+      await bot.lookAt(reachable.position.offset(0.5, 0.5, 0.5));
+      await bot.dig(reachable);
+      mineState.minedCount++;
+
+      if (mineState.minedCount % 20 === 0) {
+        const pct = ((mineState.minedCount / mineState.totalBlocks) * 100).toFixed(1);
+        log(`[MINE] \u041f\u0440\u043e\u0433\u0440\u0435\u0441\u0441: ${mineState.minedCount}/${mineState.totalBlocks} (${pct}%) | Y: ${reachable.position.y}`);
+      }
+    } catch (e) {
+      log(`[MINE] \u041e\u0448\u0438\u0431\u043a\u0430 \u043a\u043e\u043f\u0430\u043d\u0438\u044f: ${e.message}`);
+    }
+    isMining = false;
+    return;
+  }
+
+  const nextTarget = findNextCursorTarget();
+  if (!nextTarget) {
+    log('[MINE] \u0417\u043e\u043d\u0430 \u043f\u043e\u043b\u043d\u043e\u0441\u0442\u044c\u044e \u0432\u044b\u043a\u043e\u043f\u0430\u043d\u0430!');
+    sendTelegram('[PRISSET BOT] \u0417\u043e\u043d\u0430 \u043f\u043e\u043b\u043d\u043e\u0441\u0442\u044c\u044e \u0432\u044b\u043a\u043e\u043f\u0430\u043d\u0430!');
+    stopMineMode();
+    startFarmMode();
+    return;
+  }
+
+  if (mineState.walkFails >= 3) {
+    log(`[MINE] \u041d\u0435 \u043c\u043e\u0433\u0443 \u0434\u043e\u0439\u0442\u0438, \u043f\u0440\u043e\u043f\u0443\u0441\u043a\u0430\u044e`);
     mineState.skippedCount++;
     mineState.walkFails = 0;
     advanceMinePosition();
     return;
   }
 
-  const dist = botPos.distanceTo(target);
-  if (dist > 4.5) {
-    if (mineState.walkFails >= 3) {
-      log(`[MINE] \u041d\u0435 \u043c\u043e\u0433\u0443 \u0434\u043e\u0439\u0442\u0438 \u0434\u043e ${mineState.curX},${mineState.curY},${mineState.curZ}, \u043f\u0440\u043e\u043f\u0443\u0441\u043a\u0430\u044e`);
-      mineState.skippedCount++;
-      mineState.walkFails = 0;
-      advanceMinePosition();
-      return;
+  const dist = botPos.distanceTo(nextTarget);
+  log(`[MINE] \u0418\u0434\u0443 \u043a ${nextTarget.x},${nextTarget.y},${nextTarget.z} (\u0434\u0438\u0441\u0442: ${dist.toFixed(1)})`);
+  const reached = await walkToBlock(nextTarget);
+  if (!reached) mineState.walkFails++;
+  else mineState.walkFails = 0;
+}
+
+function findNearestReachableBlock() {
+  if (!bot || !bot.entity || !mineState) return null;
+  const pos = bot.entity.position;
+  const s = mineState;
+  let nearest = null;
+  let nearestDist = 4.6;
+
+  const range = 4;
+  const bx = Math.floor(pos.x), by = Math.floor(pos.y), bz = Math.floor(pos.z);
+
+  for (let y = Math.min(by + range, s.maxY); y >= Math.max(by - range, s.minY); y--) {
+    for (let x = Math.max(bx - range, s.minX); x <= Math.min(bx + range, s.maxX); x++) {
+      for (let z = Math.max(bz - range, s.minZ); z <= Math.min(bz + range, s.maxZ); z++) {
+        const blockPos = new Vec3(x, y, z);
+        const dist = pos.distanceTo(blockPos);
+        if (dist > 4.5 || dist >= nearestDist) continue;
+        const block = bot.blockAt(blockPos);
+        if (!block || SKIP_BLOCKS.has(block.name) || block.boundingBox === 'empty') continue;
+        if (hasAdjacentDanger(blockPos)) continue;
+        nearest = block;
+        nearestDist = dist;
+      }
     }
-    log(`[MINE] \u0418\u0434\u0443 \u043a ${mineState.curX},${mineState.curY},${mineState.curZ} (\u0434\u0438\u0441\u0442: ${dist.toFixed(1)}, \u043f\u043e\u043f\u044b\u0442\u043a\u0430 ${mineState.walkFails + 1}/3)`);
-    const reached = await walkToBlock(target);
-    if (!reached) {
-      mineState.walkFails++;
-    } else {
-      mineState.walkFails = 0;
+  }
+  return nearest;
+}
+
+function findNextCursorTarget() {
+  if (!mineState) return null;
+  const s = mineState;
+
+  for (let i = 0; i < 500; i++) {
+    if (s.curY < s.minY) return null;
+
+    const pos = new Vec3(s.curX, s.curY, s.curZ);
+    const block = bot.blockAt(pos);
+    if (block && !SKIP_BLOCKS.has(block.name) && block.boundingBox !== 'empty' && !hasAdjacentDanger(pos)) {
+      return pos;
     }
-    return;
-  }
 
-  mineState.walkFails = 0;
-  await ensurePickaxeEquipped();
-
-  if (!findBestPickaxe() && !bot.heldItem?.name?.includes('pickaxe')) {
-    log('[MINE] \u041d\u0435\u0442 \u043a\u0438\u0440\u043a\u0438! \u041e\u0441\u0442\u0430\u043d\u043e\u0432\u043a\u0430.');
-    sendTelegram('[PRISSET BOT] \u041d\u0435\u0442 \u043a\u0438\u0440\u043a\u0438! \u041a\u043e\u043f\u0430\u043d\u0438\u0435 \u043e\u0441\u0442\u0430\u043d\u043e\u0432\u043b\u0435\u043d\u043e.');
-    stopMineMode();
-    return;
-  }
-
-  isMining = true;
-  try {
-    log(`[MINE] \u041a\u043e\u043f\u0430\u044e ${block.name} \u043d\u0430 ${mineState.curX},${mineState.curY},${mineState.curZ}`);
-    await bot.lookAt(target.offset(0.5, 0.5, 0.5));
-    await bot.dig(block);
-    mineState.minedCount++;
+    s.skippedCount++;
     advanceMinePosition();
-
-    if (mineState.minedCount % 20 === 0) {
-      const processed = mineState.minedCount + mineState.skippedCount;
-      const pct = ((processed / mineState.totalBlocks) * 100).toFixed(1);
-      log(`[MINE] \u041f\u0440\u043e\u0433\u0440\u0435\u0441\u0441: ${processed}/${mineState.totalBlocks} (${pct}%) | \u0412\u044b\u043a\u043e\u043f\u0430\u043d\u043e: ${mineState.minedCount} | Y: ${mineState.curY}`);
-    }
-  } catch (e) {
-    log(`[MINE] \u041e\u0448\u0438\u0431\u043a\u0430 \u043a\u043e\u043f\u0430\u043d\u0438\u044f: ${e.message}`);
-    advanceMinePosition();
   }
-  isMining = false;
+
+  return null;
 }
 
 function hasAdjacentDanger(pos) {
