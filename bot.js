@@ -1533,7 +1533,6 @@ function printHelp() {
     /farm               - Switch to farm mode
     /mine x1 y1 z1 x2 y2 z2 - Mine area between coordinates
     /mine stop          - Stop mining
-    /say <text>         - Send chat message
     /status             - Show bot status
     /help               - Show this help
     /quit               - Exit program
@@ -1681,15 +1680,11 @@ function handleCommand(line) {
       process.exit(0);
       break;
 
-    case '/say':
-      if (!arg) { log('Usage: /say <message>'); break; }
-      if (!bot) { log('Not connected'); break; }
-      bot.chat(arg);
-      break;
-
     default:
-      if (line.trim()) {
-        log(`\u041d\u0435\u0438\u0437\u0432\u0435\u0441\u0442\u043d\u0430\u044f \u043a\u043e\u043c\u0430\u043d\u0434\u0430. /help \u0434\u043b\u044f \u0441\u043f\u0438\u0441\u043a\u0430, /say <\u0442\u0435\u043a\u0441\u0442> \u0434\u043b\u044f \u0447\u0430\u0442\u0430`);
+      if (line.trim() && bot) {
+        bot.chat(line.trim());
+      } else if (line.trim()) {
+        log('Not connected. Type /start');
       }
       break;
   }
