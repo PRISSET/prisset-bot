@@ -2,6 +2,11 @@ import mineflayer from 'mineflayer';
 import { createInterface } from 'readline';
 import https from 'https';
 import * as settings from './settings.js';
+import pathfinderPkg from 'mineflayer-pathfinder';
+import minecraftData from 'minecraft-data';
+import { Vec3 } from 'vec3';
+
+const { pathfinder: pathfinderPlugin, Movements, goals: pfGoals } = pathfinderPkg;
 
 const cfg = settings.load();
 let bot = null;
@@ -47,6 +52,32 @@ const STORE_IN_CHEST = new Set([
 const PROTECTED_ITEMS = new Set([
   'netherite_sword', 'diamond_sword'
 ]);
+
+const PICKAXE_TIERS = [
+  'netherite_pickaxe', 'diamond_pickaxe', 'iron_pickaxe',
+  'stone_pickaxe', 'wooden_pickaxe', 'golden_pickaxe'
+];
+
+const DANGEROUS_BLOCKS = new Set([
+  'lava', 'flowing_lava', 'water', 'flowing_water'
+]);
+
+const SKIP_BLOCKS = new Set([
+  'air', 'cave_air', 'void_air', 'bedrock', 'barrier',
+  'command_block', 'end_portal_frame', 'end_portal', 'nether_portal',
+  'lava', 'flowing_lava', 'water', 'flowing_water'
+]);
+
+const SEALING_BLOCKS = [
+  'cobblestone', 'dirt', 'stone', 'netherrack', 'cobbled_deepslate',
+  'deepslate', 'andesite', 'diorite', 'granite', 'sandstone'
+];
+
+let currentMode = 'farm';
+let mineActive = false;
+let isMining = false;
+let mineConfig = null;
+let mineState = null;
 
 let isManagingInventory = false;
 let lastInventoryManageTime = 0;
@@ -95,7 +126,13 @@ const ITEM_NAMES_RU = {
   'apple': '\u044f\u0431\u043b\u043e\u043a\u043e', 'melon_slice': '\u0434\u043e\u043b\u044c\u043a\u0430 \u0430\u0440\u0431\u0443\u0437\u0430',
   'sweet_berries': '\u0441\u043b\u0430\u0434\u043a\u0438\u0435 \u044f\u0433\u043e\u0434\u044b',
   'dried_kelp': '\u0441\u0443\u0448\u0451\u043d\u0430\u044f \u043c\u043e\u0440\u0441\u043a\u0430\u044f \u043a\u0430\u043f\u0443\u0441\u0442\u0430',
-  'carrot': '\u043c\u043e\u0440\u043a\u043e\u0432\u043a\u0430', 'potato': '\u043a\u0430\u0440\u0442\u043e\u0444\u0435\u043b\u044c'
+  'carrot': '\u043c\u043e\u0440\u043a\u043e\u0432\u043a\u0430', 'potato': '\u043a\u0430\u0440\u0442\u043e\u0444\u0435\u043b\u044c',
+  'netherite_pickaxe': '\u043d\u0435\u0437\u0435\u0440\u0438\u0442\u043e\u0432\u0430\u044f \u043a\u0438\u0440\u043a\u0430',
+  'diamond_pickaxe': '\u0430\u043b\u043c\u0430\u0437\u043d\u0430\u044f \u043a\u0438\u0440\u043a\u0430',
+  'iron_pickaxe': '\u0436\u0435\u043b\u0435\u0437\u043d\u0430\u044f \u043a\u0438\u0440\u043a\u0430',
+  'stone_pickaxe': '\u043a\u0430\u043c\u0435\u043d\u043d\u0430\u044f \u043a\u0438\u0440\u043a\u0430',
+  'wooden_pickaxe': '\u0434\u0435\u0440\u0435\u0432\u044f\u043d\u043d\u0430\u044f \u043a\u0438\u0440\u043a\u0430',
+  'golden_pickaxe': '\u0437\u043e\u043b\u043e\u0442\u0430\u044f \u043a\u0438\u0440\u043a\u0430'
 };
 
 function ru(name) { return ITEM_NAMES_RU[name] || MOB_NAMES_RU[name] || name; }
@@ -155,6 +192,8 @@ function startBot() {
     auth: 'offline',
     hideErrors: false
   });
+
+  bot.loadPlugin(pathfinderPlugin);
 
   bot.on('login', () => {
     log('\u0412\u043e\u0448\u043b\u0438 \u043d\u0430 \u0441\u0435\u0440\u0432\u0435\u0440!');
@@ -216,6 +255,8 @@ function cleanup() {
   stopAutoEat();
   guardActive = false;
   farmActive = false;
+  mineActive = false;
+  isMining = false;
 }
 
 // =====================
@@ -293,14 +334,39 @@ function logWindowSlots(window) {
 function onNavigationDone() {
   navigationDone = true;
   guardActive = true;
-  farmActive = true;
-  log('\u0424\u0410\u0420\u041c \u0410\u041a\u0422\u0418\u0412\u0415\u041d. \u041e\u0445\u043e\u0442\u0430 \u043d\u0430 \u043c\u043e\u0431\u043e\u0432 + \u043e\u0445\u0440\u0430\u043d\u0430...');
 
+  setupPathfinder();
   startGuardScan();
-  startFarmLoop();
   startAutoEat();
 
+  if (currentMode === 'mine' && mineConfig) {
+    startMineMode(mineConfig.x1, mineConfig.y1, mineConfig.z1, mineConfig.x2, mineConfig.y2, mineConfig.z2);
+  } else {
+    startFarmMode();
+  }
+}
+
+function setupPathfinder() {
+  if (!bot) return;
+  try {
+    const mcData = minecraftData(bot.version);
+    const movements = new Movements(bot, mcData);
+    movements.canDig = false;
+    movements.allow1by1towers = false;
+    bot.pathfinder.setMovements(movements);
+  } catch (e) {
+    log(`Pathfinder setup error: ${e.message}`);
+  }
+}
+
+function startFarmMode() {
+  stopMineMode();
+  currentMode = 'farm';
+  farmActive = true;
+  guardActive = true;
+  startFarmLoop();
   equipBestSword();
+  log('\u0424\u0410\u0420\u041c \u0410\u041a\u0422\u0418\u0412\u0415\u041d. \u041e\u0445\u043e\u0442\u0430 \u043d\u0430 \u043c\u043e\u0431\u043e\u0432 + \u043e\u0445\u0440\u0430\u043d\u0430...');
 }
 
 // =====================
@@ -352,6 +418,8 @@ function scanNearbyPlayers() {
 async function handleEnemyDetected(username, entityPos) {
   guardActive = false;
   farmActive = false;
+  mineActive = false;
+  isMining = false;
   stopFarmLoop();
 
   const selfName = cfg.botNick;
@@ -404,6 +472,8 @@ function startReconnectCheck() {
     auth: 'offline',
     hideErrors: false
   });
+
+  bot.loadPlugin(pathfinderPlugin);
 
   let checkDone = false;
   let connectFailed = false;
@@ -487,8 +557,9 @@ function startReconnectCheck() {
         handleEnemyDetected(enemyName, enemyEntity.position);
       }
     } else {
-      log('[\u041f\u0420\u041e\u0412\u0415\u0420\u041a\u0410] \u0427\u0438\u0441\u0442\u043e! \u0412\u043e\u0437\u043e\u0431\u043d\u043e\u0432\u043b\u044f\u0435\u043c \u0444\u0430\u0440\u043c...');
-      sendTelegram(`[PRISSET BOT] \u0411\u0430\u0437\u0430 \u0447\u0438\u0441\u0442\u0430. \u0424\u0430\u0440\u043c \u0432\u043e\u0437\u043e\u0431\u043d\u043e\u0432\u043b\u0435\u043d.`);
+      const modeLabel = currentMode === 'mine' ? '\u041a\u043e\u043f\u0430\u043d\u0438\u0435' : '\u0424\u0430\u0440\u043c';
+      log(`[\u041f\u0420\u041e\u0412\u0415\u0420\u041a\u0410] \u0427\u0438\u0441\u0442\u043e! \u0412\u043e\u0437\u043e\u0431\u043d\u043e\u0432\u043b\u044f\u0435\u043c ${modeLabel}...`);
+      sendTelegram(`[PRISSET BOT] \u0411\u0430\u0437\u0430 \u0447\u0438\u0441\u0442\u0430. ${modeLabel} \u0432\u043e\u0437\u043e\u0431\u043d\u043e\u0432\u043b\u0435\u043d.`);
       reconnecting = false;
       reconnectAttempt = 0;
       lastEnemyName = null;
@@ -496,12 +567,16 @@ function startReconnectCheck() {
 
       navigationDone = true;
       guardActive = true;
-      farmActive = true;
 
+      setupPathfinder();
       startGuardScan();
-      startFarmLoop();
       startAutoEat();
-      equipBestSword();
+
+      if (currentMode === 'mine' && mineConfig) {
+        startMineMode(mineConfig.x1, mineConfig.y1, mineConfig.z1, mineConfig.x2, mineConfig.y2, mineConfig.z2);
+      } else {
+        startFarmMode();
+      }
 
       bot.on('health', () => {
         tryAutoEat();
@@ -521,8 +596,6 @@ function startReconnectCheck() {
         const text = msg.toString();
         if (text.trim()) log(`[CHAT] ${text}`);
       });
-
-      log('\u0424\u0410\u0420\u041c \u0410\u041a\u0422\u0418\u0412\u0415\u041d.');
     }
   }
 }
@@ -677,6 +750,272 @@ function findNearestHostile() {
   }
 
   return nearest;
+}
+
+// =====================
+// MINING
+// =====================
+
+function startMineMode(x1, y1, z1, x2, y2, z2) {
+  stopFarmLoop();
+  farmActive = false;
+  mineActive = true;
+  isMining = false;
+  currentMode = 'mine';
+  guardActive = true;
+
+  mineConfig = { x1, y1, z1, x2, y2, z2 };
+
+  const minX = Math.min(x1, x2), maxX = Math.max(x1, x2);
+  const minY = Math.min(y1, y2), maxY = Math.max(y1, y2);
+  const minZ = Math.min(z1, z2), maxZ = Math.max(z1, z2);
+
+  mineState = {
+    minX, maxX, minY, maxY, minZ, maxZ,
+    curY: maxY, curX: minX, curZ: minZ,
+    xDir: 1, zDir: 1,
+    minedCount: 0, skippedCount: 0,
+    totalBlocks: (maxX - minX + 1) * (maxY - minY + 1) * (maxZ - minZ + 1)
+  };
+
+  log(`[MINE] \u0417\u043e\u043d\u0430: (${minX},${minY},${minZ}) -> (${maxX},${maxY},${maxZ}), \u0431\u043b\u043e\u043a\u043e\u0432: ${mineState.totalBlocks}`);
+  sendTelegram(`[PRISSET BOT] \u041a\u043e\u043f\u0430\u043d\u0438\u0435 \u0437\u043e\u043d\u044b (${minX},${minY},${minZ}) -> (${maxX},${maxY},${maxZ})`);
+
+  mineLoop();
+}
+
+function stopMineMode() {
+  mineActive = false;
+  isMining = false;
+  mineState = null;
+}
+
+function advanceMinePosition() {
+  if (!mineState) return;
+  const s = mineState;
+
+  const nextZ = s.curZ + s.zDir;
+  if (nextZ >= s.minZ && nextZ <= s.maxZ) {
+    s.curZ = nextZ;
+    return;
+  }
+
+  s.zDir *= -1;
+  const nextX = s.curX + s.xDir;
+  if (nextX >= s.minX && nextX <= s.maxX) {
+    s.curX = nextX;
+    return;
+  }
+
+  s.xDir *= -1;
+  s.curY--;
+}
+
+function isMineComplete() {
+  if (!mineState) return true;
+  return mineState.curY < mineState.minY;
+}
+
+async function mineLoop() {
+  while (mineActive && bot && bot.entity) {
+    try {
+      if (isEating || isManagingInventory) {
+        await sleep(500);
+        continue;
+      }
+      await mineTick();
+    } catch (e) {
+      log(`[MINE] \u041e\u0448\u0438\u0431\u043a\u0430 \u0446\u0438\u043a\u043b\u0430: ${e.message}`);
+    }
+    await sleep(150);
+  }
+  if (!mineActive) log('[MINE] \u0426\u0438\u043a\u043b \u043a\u043e\u043f\u0430\u043d\u0438\u044f \u043e\u0441\u0442\u0430\u043d\u043e\u0432\u043b\u0435\u043d');
+}
+
+async function mineTick() {
+  if (!bot || !mineActive || !bot.entity || isMining) return;
+
+  if (isMineComplete()) {
+    log('[MINE] \u0417\u043e\u043d\u0430 \u043f\u043e\u043b\u043d\u043e\u0441\u0442\u044c\u044e \u0432\u044b\u043a\u043e\u043f\u0430\u043d\u0430!');
+    sendTelegram('[PRISSET BOT] \u0417\u043e\u043d\u0430 \u043f\u043e\u043b\u043d\u043e\u0441\u0442\u044c\u044e \u0432\u044b\u043a\u043e\u043f\u0430\u043d\u0430!');
+    stopMineMode();
+    startFarmMode();
+    return;
+  }
+
+  if (mineState.minedCount > 0 && mineState.minedCount % 50 === 0) {
+    await manageInventory().catch(() => {});
+  }
+
+  const target = new Vec3(mineState.curX, mineState.curY, mineState.curZ);
+  const block = bot.blockAt(target);
+
+  if (!block || SKIP_BLOCKS.has(block.name) || block.boundingBox === 'empty') {
+    mineState.skippedCount++;
+    advanceMinePosition();
+    return;
+  }
+
+  const botPos = bot.entity.position;
+  const botBlock = bot.blockAt(new Vec3(Math.floor(botPos.x), Math.floor(botPos.y), Math.floor(botPos.z)));
+  if (botBlock && DANGEROUS_BLOCKS.has(botBlock.name)) {
+    log('[MINE] \u0411\u043e\u0442 \u0432 \u043e\u043f\u0430\u0441\u043d\u043e\u0441\u0442\u0438! \u041e\u0442\u0445\u043e\u0436\u0443...');
+    await moveAwayFromDanger();
+    return;
+  }
+
+  if (hasAdjacentDanger(target)) {
+    log(`[MINE] \u041f\u0440\u043e\u043f\u0443\u0441\u043a ${mineState.curX},${mineState.curY},${mineState.curZ} - \u0440\u044f\u0434\u043e\u043c \u043b\u0430\u0432\u0430/\u0432\u043e\u0434\u0430`);
+    mineState.skippedCount++;
+    advanceMinePosition();
+    return;
+  }
+
+  const dist = botPos.distanceTo(target);
+  if (dist > 4.5) {
+    await walkToBlock(target);
+    return;
+  }
+
+  await ensurePickaxeEquipped();
+
+  if (!findBestPickaxe() && !bot.heldItem?.name?.includes('pickaxe')) {
+    log('[MINE] \u041d\u0435\u0442 \u043a\u0438\u0440\u043a\u0438! \u041e\u0441\u0442\u0430\u043d\u043e\u0432\u043a\u0430.');
+    sendTelegram('[PRISSET BOT] \u041d\u0435\u0442 \u043a\u0438\u0440\u043a\u0438! \u041a\u043e\u043f\u0430\u043d\u0438\u0435 \u043e\u0441\u0442\u0430\u043d\u043e\u0432\u043b\u0435\u043d\u043e.');
+    stopMineMode();
+    return;
+  }
+
+  isMining = true;
+  try {
+    await bot.lookAt(target.offset(0.5, 0.5, 0.5));
+    await bot.dig(block);
+    mineState.minedCount++;
+    advanceMinePosition();
+
+    if (mineState.minedCount % 20 === 0) {
+      const processed = mineState.minedCount + mineState.skippedCount;
+      const pct = ((processed / mineState.totalBlocks) * 100).toFixed(1);
+      log(`[MINE] \u041f\u0440\u043e\u0433\u0440\u0435\u0441\u0441: ${processed}/${mineState.totalBlocks} (${pct}%) | \u0412\u044b\u043a\u043e\u043f\u0430\u043d\u043e: ${mineState.minedCount} | Y: ${mineState.curY}`);
+    }
+  } catch (e) {
+    log(`[MINE] \u041e\u0448\u0438\u0431\u043a\u0430 \u043a\u043e\u043f\u0430\u043d\u0438\u044f: ${e.message}`);
+    advanceMinePosition();
+  }
+  isMining = false;
+}
+
+function hasAdjacentDanger(pos) {
+  const offsets = [[1,0,0],[-1,0,0],[0,1,0],[0,-1,0],[0,0,1],[0,0,-1]];
+  for (const [dx, dy, dz] of offsets) {
+    const block = bot.blockAt(pos.offset(dx, dy, dz));
+    if (block && DANGEROUS_BLOCKS.has(block.name)) return true;
+  }
+  return false;
+}
+
+async function moveAwayFromDanger() {
+  const pos = bot.entity.position;
+
+  for (let r = 2; r <= 5; r++) {
+    for (let dx = -r; dx <= r; dx++) {
+      for (let dz = -r; dz <= r; dz++) {
+        if (Math.abs(dx) < 2 && Math.abs(dz) < 2) continue;
+        const checkPos = new Vec3(Math.floor(pos.x) + dx, Math.floor(pos.y), Math.floor(pos.z) + dz);
+        const blockAt = bot.blockAt(checkPos);
+        const blockBelow = bot.blockAt(checkPos.offset(0, -1, 0));
+        const blockAbove = bot.blockAt(checkPos.offset(0, 1, 0));
+        if (!blockAt || blockAt.boundingBox !== 'empty') continue;
+        if (!blockAbove || blockAbove.boundingBox !== 'empty') continue;
+        if (!blockBelow || blockBelow.boundingBox === 'empty') continue;
+        if (DANGEROUS_BLOCKS.has(blockAt.name) || DANGEROUS_BLOCKS.has(blockBelow.name)) continue;
+
+        try {
+          const { GoalNear } = pfGoals;
+          bot.pathfinder.setGoal(new GoalNear(checkPos.x, checkPos.y, checkPos.z, 1));
+          await waitForPath(5000);
+          return;
+        } catch {}
+      }
+    }
+  }
+
+  bot.setControlState('back', true);
+  bot.setControlState('jump', true);
+  await sleep(600);
+  bot.clearControlStates();
+}
+
+async function walkToBlock(target) {
+  try {
+    const { GoalNear } = pfGoals;
+    bot.pathfinder.setGoal(new GoalNear(target.x, target.y, target.z, 3));
+    await waitForPath(15000);
+  } catch (e) {
+    log(`[MINE] \u041e\u0448\u0438\u0431\u043a\u0430 \u043f\u0443\u0442\u0438: ${e.message}`);
+    await sleep(1000);
+  }
+}
+
+function waitForPath(timeout) {
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => {
+      if (bot && bot.pathfinder) bot.pathfinder.setGoal(null);
+      resolve();
+    }, timeout);
+
+    function onReached() {
+      clearTimeout(timer);
+      cleanup();
+      resolve();
+    }
+
+    function onStopped() {
+      clearTimeout(timer);
+      cleanup();
+      resolve();
+    }
+
+    function cleanup() {
+      bot.removeListener('goal_reached', onReached);
+      bot.removeListener('path_stopped', onStopped);
+    }
+
+    bot.once('goal_reached', onReached);
+    bot.once('path_stopped', onStopped);
+  });
+}
+
+async function ensurePickaxeEquipped() {
+  if (!bot || !bot.inventory) return;
+  const held = bot.heldItem;
+  if (held && held.name.includes('pickaxe')) return;
+
+  const pick = findBestPickaxe();
+  if (!pick) return;
+
+  try {
+    await bot.equip(pick, 'hand');
+    log(`[\u042d\u041a\u0418\u041f] ${ru(pick.name)}`);
+  } catch {}
+}
+
+function findBestPickaxe() {
+  if (!bot || !bot.inventory) return null;
+  for (const tier of PICKAXE_TIERS) {
+    const pick = bot.inventory.items().find(item => item.name === tier);
+    if (pick) return pick;
+  }
+  return null;
+}
+
+function findSealingBlock() {
+  if (!bot || !bot.inventory) return null;
+  for (const name of SEALING_BLOCKS) {
+    const item = bot.inventory.items().find(i => i.name === name);
+    if (item) return item;
+  }
+  return null;
 }
 
 // =====================
@@ -1141,6 +1480,9 @@ function printHelp() {
     /chatid <id>        - Set Telegram chat ID
     /start              - Connect to server
     /stop               - Disconnect
+    /farm               - Switch to farm mode
+    /mine x1 y1 z1 x2 y2 z2 - Mine area between coordinates
+    /mine stop          - Stop mining
     /status             - Show bot status
     /help               - Show this help
     /quit               - Exit program
@@ -1210,6 +1552,33 @@ function handleCommand(line) {
       log(`Telegram chat ID set to: ${arg}`);
       break;
 
+    case '/farm':
+      if (!bot || !navigationDone) { log('\u0411\u043e\u0442 \u043d\u0435 \u043f\u043e\u0434\u043a\u043b\u044e\u0447\u0435\u043d \u0438\u043b\u0438 \u043d\u0435 \u0433\u043e\u0442\u043e\u0432'); break; }
+      startFarmMode();
+      break;
+
+    case '/mine': {
+      if (!bot || !navigationDone) { log('\u0411\u043e\u0442 \u043d\u0435 \u043f\u043e\u0434\u043a\u043b\u044e\u0447\u0435\u043d \u0438\u043b\u0438 \u043d\u0435 \u0433\u043e\u0442\u043e\u0432'); break; }
+      const mineArgs = parts.slice(1);
+      if (mineArgs[0] === 'stop') {
+        stopMineMode();
+        log('[MINE] \u041a\u043e\u043f\u0430\u043d\u0438\u0435 \u043e\u0441\u0442\u0430\u043d\u043e\u0432\u043b\u0435\u043d\u043e');
+        break;
+      }
+      if (mineArgs.length < 6) {
+        log('Usage: /mine x1 y1 z1 x2 y2 z2');
+        log('       /mine stop');
+        break;
+      }
+      const coords = mineArgs.slice(0, 6).map(Number);
+      if (coords.some(isNaN)) {
+        log('\u041e\u0448\u0438\u0431\u043a\u0430: \u043a\u043e\u043e\u0440\u0434\u0438\u043d\u0430\u0442\u044b \u0434\u043e\u043b\u0436\u043d\u044b \u0431\u044b\u0442\u044c \u0447\u0438\u0441\u043b\u0430\u043c\u0438');
+        break;
+      }
+      startMineMode(coords[0], coords[1], coords[2], coords[3], coords[4], coords[5]);
+      break;
+    }
+
     case '/start':
       if (bot) { log('Already connected! Use /stop first'); break; }
       reconnecting = false;
@@ -1228,7 +1597,7 @@ function handleCommand(line) {
       } else if (!bot) {
         log('\u0421\u0442\u0430\u0442\u0443\u0441: \u041e\u0424\u0424\u041b\u0410\u0419\u041d');
       } else {
-        const mode = farmActive ? '\u0424\u0410\u0420\u041c' : guardActive ? '\u041e\u0425\u0420\u0410\u041d\u0410' : '\u041f\u041e\u0414\u041a\u041b\u042e\u0427\u0415\u041d\u0418\u0415';
+        const mode = mineActive ? '\u041a\u041e\u041f\u0410\u041d\u0418\u0415' : farmActive ? '\u0424\u0410\u0420\u041c' : guardActive ? '\u041e\u0425\u0420\u0410\u041d\u0410' : '\u041f\u041e\u0414\u041a\u041b\u042e\u0427\u0415\u041d\u0418\u0415';
         log(`\u0421\u0442\u0430\u0442\u0443\u0441: ${mode}`);
         if (bot.entity) {
           const pos = bot.entity.position;
@@ -1239,6 +1608,11 @@ function handleCommand(line) {
           const mainHand = bot.heldItem;
           const offHand = bot.inventory.slots[45];
           log(`\u0420\u0443\u043a\u0430: ${mainHand ? ru(mainHand.name) : '\u043f\u0443\u0441\u0442\u043e'} | \u041b\u0435\u0432\u0430\u044f: ${offHand ? ru(offHand.name) : '\u043f\u0443\u0441\u0442\u043e'}`);
+        }
+        if (mineActive && mineState) {
+          const processed = mineState.minedCount + mineState.skippedCount;
+          const pct = ((processed / mineState.totalBlocks) * 100).toFixed(1);
+          log(`\u041a\u043e\u043f\u0430\u043d\u0438\u0435: ${processed}/${mineState.totalBlocks} (${pct}%) | Y: ${mineState.curY}`);
         }
         const players = Object.keys(bot.players).filter(n => n !== cfg.botNick);
         log(`\u0418\u0433\u0440\u043e\u043a\u0438 \u0440\u044f\u0434\u043e\u043c: ${players.length ? players.join(', ') : '\u043d\u0435\u0442'}`);
@@ -1271,7 +1645,7 @@ function handleCommand(line) {
 // =====================
 
 console.log('');
-console.log('  PRISSET BOT v2.0.0 (Farm Edition)');
+console.log('  PRISSET BOT v3.0.0 (Farm + Mine Edition)');
 console.log('  Type /help for commands');
 console.log('  Type /settings to configure');
 console.log('  Type /start to connect');
