@@ -351,9 +351,10 @@ function setupPathfinder() {
   try {
     const mcData = minecraftData(bot.version);
     const movements = new Movements(bot, mcData);
-    movements.canDig = false;
     movements.allow1by1towers = false;
+    movements.scafoldingBlocks = [];
     bot.pathfinder.setMovements(movements);
+    log('[PATH] Pathfinder ready');
   } catch (e) {
     log(`Pathfinder setup error: ${e.message}`);
   }
@@ -775,6 +776,7 @@ function startMineMode(x1, y1, z1, x2, y2, z2) {
     curY: maxY, curX: minX, curZ: minZ,
     xDir: 1, zDir: 1,
     minedCount: 0, skippedCount: 0,
+    walkFails: 0,
     totalBlocks: (maxX - minX + 1) * (maxY - minY + 1) * (maxZ - minZ + 1)
   };
 
@@ -852,6 +854,7 @@ async function mineTick() {
 
   if (!block || SKIP_BLOCKS.has(block.name) || block.boundingBox === 'empty') {
     mineState.skippedCount++;
+    mineState.walkFails = 0;
     advanceMinePosition();
     return;
   }
@@ -867,16 +870,31 @@ async function mineTick() {
   if (hasAdjacentDanger(target)) {
     log(`[MINE] \u041f\u0440\u043e\u043f\u0443\u0441\u043a ${mineState.curX},${mineState.curY},${mineState.curZ} - \u0440\u044f\u0434\u043e\u043c \u043b\u0430\u0432\u0430/\u0432\u043e\u0434\u0430`);
     mineState.skippedCount++;
+    mineState.walkFails = 0;
     advanceMinePosition();
     return;
   }
 
   const dist = botPos.distanceTo(target);
   if (dist > 4.5) {
-    await walkToBlock(target);
+    if (mineState.walkFails >= 3) {
+      log(`[MINE] \u041d\u0435 \u043c\u043e\u0433\u0443 \u0434\u043e\u0439\u0442\u0438 \u0434\u043e ${mineState.curX},${mineState.curY},${mineState.curZ}, \u043f\u0440\u043e\u043f\u0443\u0441\u043a\u0430\u044e`);
+      mineState.skippedCount++;
+      mineState.walkFails = 0;
+      advanceMinePosition();
+      return;
+    }
+    log(`[MINE] \u0418\u0434\u0443 \u043a ${mineState.curX},${mineState.curY},${mineState.curZ} (\u0434\u0438\u0441\u0442: ${dist.toFixed(1)}, \u043f\u043e\u043f\u044b\u0442\u043a\u0430 ${mineState.walkFails + 1}/3)`);
+    const reached = await walkToBlock(target);
+    if (!reached) {
+      mineState.walkFails++;
+    } else {
+      mineState.walkFails = 0;
+    }
     return;
   }
 
+  mineState.walkFails = 0;
   await ensurePickaxeEquipped();
 
   if (!findBestPickaxe() && !bot.heldItem?.name?.includes('pickaxe')) {
@@ -888,6 +906,7 @@ async function mineTick() {
 
   isMining = true;
   try {
+    log(`[MINE] \u041a\u043e\u043f\u0430\u044e ${block.name} \u043d\u0430 ${mineState.curX},${mineState.curY},${mineState.curZ}`);
     await bot.lookAt(target.offset(0.5, 0.5, 0.5));
     await bot.dig(block);
     mineState.minedCount++;
@@ -950,10 +969,14 @@ async function walkToBlock(target) {
   try {
     const { GoalNear } = pfGoals;
     bot.pathfinder.setGoal(new GoalNear(target.x, target.y, target.z, 3));
-    await waitForPath(15000);
+    await waitForPath(10000);
+    const dist = bot.entity.position.distanceTo(target);
+    if (dist <= 4.5) return true;
+    log(`[MINE] \u041d\u0435 \u0434\u043e\u0448\u0451\u043b, \u0434\u0438\u0441\u0442: ${dist.toFixed(1)}`);
+    return false;
   } catch (e) {
     log(`[MINE] \u041e\u0448\u0438\u0431\u043a\u0430 \u043f\u0443\u0442\u0438: ${e.message}`);
-    await sleep(1000);
+    return false;
   }
 }
 
@@ -1483,6 +1506,7 @@ function printHelp() {
     /farm               - Switch to farm mode
     /mine x1 y1 z1 x2 y2 z2 - Mine area between coordinates
     /mine stop          - Stop mining
+    /say <text>         - Send chat message
     /status             - Show bot status
     /help               - Show this help
     /quit               - Exit program
@@ -1630,11 +1654,15 @@ function handleCommand(line) {
       process.exit(0);
       break;
 
+    case '/say':
+      if (!arg) { log('Usage: /say <message>'); break; }
+      if (!bot) { log('Not connected'); break; }
+      bot.chat(arg);
+      break;
+
     default:
-      if (line.trim() && bot) {
-        bot.chat(line.trim());
-      } else if (line.trim()) {
-        log('Not connected. Type /start');
+      if (line.trim()) {
+        log(`\u041d\u0435\u0438\u0437\u0432\u0435\u0441\u0442\u043d\u0430\u044f \u043a\u043e\u043c\u0430\u043d\u0434\u0430. /help \u0434\u043b\u044f \u0441\u043f\u0438\u0441\u043a\u0430, /say <\u0442\u0435\u043a\u0441\u0442> \u0434\u043b\u044f \u0447\u0430\u0442\u0430`);
       }
       break;
   }
